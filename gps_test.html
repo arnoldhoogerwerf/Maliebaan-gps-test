@@ -13,6 +13,33 @@
     --muted: #8fa093;
     --accent: #7fd99a;
     --accent-dim: #3c5a45;
+    --well: #0e1410;
+    --on-accent: #0e1410;
+    --danger: #5a2c2c;
+    --danger-text: #e8efe9;
+    --remove-text: #d98888;
+    --off-bg: #3a2c2c;
+    --off-text: #e0a878;
+    --placeholder: #5a6a5d;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7faf7;
+      --panel: #ffffff;
+      --line: #d3ddd5;
+      --text: #142016;
+      --muted: #4d5d51;
+      --accent: #1f8a4c;
+      --accent-dim: #cdebd7;
+      --well: #eef3ee;
+      --on-accent: #ffffff;
+      --danger: #c94f4f;
+      --danger-text: #ffffff;
+      --remove-text: #b3402f;
+      --off-bg: #f6e4d6;
+      --off-text: #9a5a1f;
+      --placeholder: #8a9a8d;
+    }
   }
   * { box-sizing: border-box; }
   body {
@@ -58,14 +85,14 @@
   input[type="text"], input[type="number"] {
     flex: 1;
     min-width: 0;
-    background: #0e1410;
+    background: var(--well);
     border: 1px solid var(--line);
     color: var(--text);
     border-radius: 8px;
     padding: 10px 10px;
     font-size: 14px;
   }
-  input::placeholder { color: #5a6a5d; }
+  input::placeholder { color: var(--placeholder); }
   button {
     background: var(--accent-dim);
     color: var(--text);
@@ -77,11 +104,12 @@
   }
   button.primary {
     background: var(--accent);
-    color: #0e1410;
+    color: var(--on-accent);
     font-weight: 600;
   }
   button.danger {
-    background: #5a2c2c;
+    background: var(--danger);
+    color: var(--danger-text);
   }
   button:active { opacity: 0.7; }
   .full { width: 100%; margin-top: 4px; }
@@ -109,7 +137,7 @@
   }
   .gain-bar-track {
     height: 6px;
-    background: #0e1410;
+    background: var(--well);
     border-radius: 4px;
     overflow: hidden;
     margin-top: 8px;
@@ -122,7 +150,7 @@
   }
   .remove-btn {
     background: transparent;
-    color: #b66;
+    color: var(--remove-text);
     padding: 4px 8px;
     font-size: 12px;
   }
@@ -133,7 +161,7 @@
     font-size: 13px;
   }
   .status-item {
-    background: #0e1410;
+    background: var(--well);
     border-radius: 8px;
     padding: 10px;
   }
@@ -156,7 +184,7 @@
     background: var(--accent-dim);
     color: var(--accent);
   }
-  .pill.off { background: #3a2c2c; color: #c98; }
+  .pill.off { background: var(--off-bg); color: var(--off-text); }
   .footnote {
     font-size: 11px;
     color: var(--muted);
@@ -223,6 +251,8 @@
   <h2>Zones (<span id="zoneCount">0</span>)</h2>
   <div id="zoneList"></div>
   <div id="emptyState" class="sub" style="margin:0;">Nog geen zones toegevoegd.</div>
+  <button class="full danger" id="clearAllBtn" style="margin-top:10px;">Wis alle zones</button>
+  <div class="footnote" style="margin-top:6px;">Zones worden automatisch lokaal opgeslagen op dit device en blijven bewaard na herladen.</div>
 </div>
 
 <div class="footnote">
@@ -276,10 +306,31 @@
   }
 
   // --- Audio setup ---
+  let masterGain = null;
+  let limiter = null;
+  let rafId = null;
+
   function ensureAudioContext() {
     if (!audioCtx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       audioCtx = new AC();
+
+      // Limiter: voorkomt clipping/crash wanneer meerdere zones gelijktijdig klinken
+      limiter = audioCtx.createDynamicsCompressor();
+      limiter.threshold.value = -12;
+      limiter.knee.value = 6;
+      limiter.ratio.value = 12;
+      limiter.attack.value = 0.003;
+      limiter.release.value = 0.25;
+
+      // Mastergain: extra headroom, geschaald naar aantal zones
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = 0.8;
+
+      masterGain.connect(limiter);
+      limiter.connect(audioCtx.destination);
+
+      startInterpolationLoop();
     }
     if (audioCtx.state === 'suspended') {
       audioCtx.resume();
@@ -301,16 +352,57 @@
     osc.frequency.value = frequencyForIndex(zone.index);
     gainNode.gain.value = 0;
     osc.connect(gainNode);
-    gainNode.connect(ctx.destination);
+    gainNode.connect(masterGain);
     osc.start();
-    zoneAudioNodes[zone.id] = { osc, gain: gainNode };
+    zoneAudioNodes[zone.id] = {
+      osc,
+      gain: gainNode,
+      currentValue: 0,   // wat er nu daadwerkelijk klinkt
+      targetValue: 0      // waar naartoe geïnterpoleerd wordt
+    };
   }
 
+  // Doel bijwerken; de daadwerkelijke audio-waarde volgt via de interpolatie-loop hieronder,
+  // dus deze functie "springt" niet meer mee met elke (trage) GPS-update.
   function setZoneGain(id, value) {
     const node = zoneAudioNodes[id];
-    if (node && audioCtx) {
-      node.gain.gain.setTargetAtTime(value, audioCtx.currentTime, 0.08);
+    if (node) {
+      node.targetValue = value;
     }
+  }
+
+  // Soepele, continue interpolatie tussen currentValue en targetValue, onafhankelijk
+  // van het (tragere, schoksgewijze) GPS-updatetempo. smoothing = hoeveel van de
+  // resterende afstand per frame wordt afgelegd; lager = vloeiender, hoger = sneller reagerend.
+  function startInterpolationLoop() {
+    const smoothing = 0.06;
+    function tick() {
+      let activeCount = 0;
+      zones.forEach(z => {
+        const node = zoneAudioNodes[z.id];
+        if (!node) return;
+        node.currentValue += (node.targetValue - node.currentValue) * smoothing;
+        if (Math.abs(node.targetValue - node.currentValue) < 0.001) {
+          node.currentValue = node.targetValue;
+        }
+        node.gain.gain.value = node.currentValue;
+        if (node.currentValue > 0.01) activeCount++;
+        updateGainMeter(z.id, node.currentValue);
+      });
+      // Mastergain mee laten ademen met aantal actieve zones, als extra veiligheid
+      // bovenop de limiter (voorkomt dat 5+ volle zones alsnog samen pieken).
+      if (masterGain && audioCtx) {
+        const headroom = activeCount <= 2 ? 0.8 : 0.8 * (2 / activeCount);
+        masterGain.gain.setTargetAtTime(Math.max(0.35, headroom), audioCtx.currentTime, 0.3);
+      }
+      rafId = requestAnimationFrame(tick);
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function updateGainMeter(id, value) {
+    const fill = document.getElementById('fill-' + id);
+    if (fill) fill.style.width = (value * 100).toFixed(0) + '%';
   }
 
   els.audioToggle.addEventListener('click', () => {
@@ -424,6 +516,39 @@
     });
   }
 
+  const STORAGE_KEY = 'maliebaan_gps_test_zones';
+
+  function saveZonesToStorage() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ nextZoneId, zones }));
+    } catch (e) {
+      console.warn('Kon zones niet opslaan in localStorage:', e);
+    }
+  }
+
+  function loadZonesFromStorage() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.zones)) {
+        zones.push(...data.zones);
+      }
+      if (typeof data.nextZoneId === 'number') {
+        nextZoneId = data.nextZoneId;
+      }
+    } catch (e) {
+      console.warn('Kon zones niet laden uit localStorage:', e);
+    }
+  }
+
+  function clearAllZones() {
+    if (zones.length === 0) return;
+    if (!confirm('Alle zones verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
+    zones.slice().forEach(z => removeZone(z.id));
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
   function addZone() {
     const name = els.zoneName.value.trim();
     const lat = parseFloat(els.zoneLat.value);
@@ -436,6 +561,7 @@
     const zone = { id: nextZoneId++, name, lat, lon, radius, index: zones.length };
     zones.push(zone);
     renderZoneList();
+    saveZonesToStorage();
 
     if (audioCtx) createZoneAudio(zone);
 
@@ -459,9 +585,11 @@
     }
     zones.splice(idx, 1);
     renderZoneList();
+    saveZonesToStorage();
   }
 
   els.addZoneBtn.addEventListener('click', addZone);
+  document.getElementById('clearAllBtn').addEventListener('click', clearAllZones);
 
   els.useCurrentBtn.addEventListener('click', () => {
     if (!currentPos) {
@@ -472,6 +600,7 @@
     els.zoneLon.value = currentPos.longitude.toFixed(6);
   });
 
+  loadZonesFromStorage();
   renderZoneList();
 })();
 </script>
