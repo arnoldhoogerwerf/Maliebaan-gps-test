@@ -346,16 +346,52 @@
 
   function createZoneAudio(zone) {
     const ctx = ensureAudioContext();
+    const freq = frequencyForIndex(zone.index);
+
+    // Grondtoon
     const osc = ctx.createOscillator();
-    const gainNode = ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.value = frequencyForIndex(zone.index);
+    osc.frequency.value = freq;
+
+    // Zachte boventoon (octaaf hoger, lager volume) voor wat warmte t.o.v. een kale sinus
+    const overtoneOsc = ctx.createOscillator();
+    overtoneOsc.type = 'sine';
+    overtoneOsc.frequency.value = freq * 2;
+    const overtoneGain = ctx.createGain();
+    overtoneGain.gain.value = 0.18; // bescheiden, blijft op de achtergrond
+
+    // Gezamenlijke gain die door de interpolatie-loop wordt aangestuurd (afstand -> volume)
+    const gainNode = ctx.createGain();
     gainNode.gain.value = 0;
-    osc.connect(gainNode);
+
+    // Subtiele tremolo: langzame LFO die het volume net iets laat ademen,
+    // zodat de toon niet helemaal statisch/dood klinkt
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 0.15 + Math.random() * 0.1; // ~6-9 sec per cyclus, licht random zodat zones niet synchroon ademen
+    const lfoDepth = ctx.createGain();
+    lfoDepth.gain.value = 0.06; // hoeveel de tremolo het volume laat schommelen
+    const lfoOffset = ctx.createConstantSource();
+    lfoOffset.offset.value = 1; // basis: volle sterkte, LFO trekt er een beetje vanaf
+
+    lfo.connect(lfoDepth);
+    const tremoloGain = ctx.createGain();
+    lfoOffset.connect(tremoloGain.gain);
+    lfoDepth.connect(tremoloGain.gain);
+
+    osc.connect(tremoloGain);
+    overtoneOsc.connect(overtoneGain);
+    overtoneGain.connect(tremoloGain);
+    tremoloGain.connect(gainNode);
     gainNode.connect(masterGain);
+
     osc.start();
+    overtoneOsc.start();
+    lfo.start();
+    lfoOffset.start();
+
     zoneAudioNodes[zone.id] = {
-      osc,
+      osc, overtoneOsc, lfo, lfoOffset,
       gain: gainNode,
       currentValue: 0,   // wat er nu daadwerkelijk klinkt
       targetValue: 0      // waar naartoe geïnterpoleerd wordt
@@ -405,12 +441,39 @@
     if (fill) fill.style.width = (value * 100).toFixed(0) + '%';
   }
 
+  let wakeLock = null;
+
+  async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) {
+      console.warn('Wake Lock API niet ondersteund in deze browser.');
+      return;
+    }
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+      });
+    } catch (err) {
+      console.warn('Wake Lock kon niet worden geactiveerd:', err);
+    }
+  }
+
+  // Scherm dimt soms ondanks wake lock zodra de pagina kort naar de achtergrond gaat
+  // (bv. notificatie, app-switch). Bij terugkeer opnieuw aanvragen.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && audioCtx) {
+      requestWakeLock();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+  });
+
   els.audioToggle.addEventListener('click', () => {
     ensureAudioContext();
     zones.forEach(z => {
       if (!zoneAudioNodes[z.id]) createZoneAudio(z);
     });
-    els.audioToggle.textContent = 'Audio actief';
+    requestWakeLock();
+    els.audioToggle.textContent = 'Audio actief (scherm blijft aan)';
     els.audioToggle.disabled = true;
   });
 
@@ -578,9 +641,12 @@
     if (idx === -1) return;
     const node = zoneAudioNodes[id];
     if (node) {
-      try { node.osc.stop(); } catch(e) {}
-      node.osc.disconnect();
-      node.gain.disconnect();
+      [node.osc, node.overtoneOsc, node.lfo, node.lfoOffset].forEach(n => {
+        if (!n) return;
+        try { n.stop(); } catch(e) {}
+        try { n.disconnect(); } catch(e) {}
+      });
+      try { node.gain.disconnect(); } catch(e) {}
       delete zoneAudioNodes[id];
     }
     zones.splice(idx, 1);
