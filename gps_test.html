@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GPS Crossfade Test — Aldus spreekt De Maliebaan</title>
+<style>
+  :root {
+    --bg: #0e1410;
+    --panel: #161d18;
+    --line: #2a352e;
+    --text: #e8efe9;
+    --muted: #8fa093;
+    --accent: #7fd99a;
+    --accent-dim: #3c5a45;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: env(safe-area-inset-top) 16px 32px 16px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  h1 {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 20px 0 4px 0;
+    letter-spacing: 0.2px;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 20px;
+    line-height: 1.5;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .panel h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--muted);
+    margin: 0 0 12px 0;
+    font-weight: 600;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  input[type="text"], input[type="number"] {
+    flex: 1;
+    min-width: 0;
+    background: #0e1410;
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 10px 10px;
+    font-size: 14px;
+  }
+  input::placeholder { color: #5a6a5d; }
+  button {
+    background: var(--accent-dim);
+    color: var(--text);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  button.primary {
+    background: var(--accent);
+    color: #0e1410;
+    font-weight: 600;
+  }
+  button.danger {
+    background: #5a2c2c;
+  }
+  button:active { opacity: 0.7; }
+  .full { width: 100%; margin-top: 4px; }
+  .zone {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    position: relative;
+  }
+  .zone-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .zone-name {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .zone-meta {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .gain-bar-track {
+    height: 6px;
+    background: #0e1410;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .gain-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.2s linear;
+  }
+  .remove-btn {
+    background: transparent;
+    color: #b66;
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .status-item {
+    background: #0e1410;
+    border-radius: 8px;
+    padding: 10px;
+  }
+  .status-item .label {
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .status-item .value {
+    font-size: 16px;
+    font-weight: 600;
+    margin-top: 2px;
+  }
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+  .pill.off { background: #3a2c2c; color: #c98; }
+  .footnote {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 18px;
+    line-height: 1.5;
+  }
+  .use-current {
+    font-size: 12px;
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid var(--accent-dim);
+    padding: 6px 10px;
+  }
+</style>
+</head>
+<body>
+
+<h1>GPS Crossfade Test</h1>
+<div class="sub">
+  Voer 2–3 zones in bij jou in de buurt, start GPS, en loop rond om te testen of de audio-gain correct in- en uitfadet op basis van afstand. Elke zone krijgt een eigen gegenereerde testtoon zodat je ze uit elkaar kunt horen.
+</div>
+
+<div class="panel">
+  <h2>Status</h2>
+  <div class="status-grid">
+    <div class="status-item">
+      <div class="label">GPS</div>
+      <div class="value" id="gpsStatus">gestopt</div>
+    </div>
+    <div class="status-item">
+      <div class="label">Nauwkeurigheid</div>
+      <div class="value" id="accValue">—</div>
+    </div>
+    <div class="status-item">
+      <div class="label">Lat</div>
+      <div class="value" id="latValue">—</div>
+    </div>
+    <div class="status-item">
+      <div class="label">Lon</div>
+      <div class="value" id="lonValue">—</div>
+    </div>
+  </div>
+  <button class="full primary" id="gpsToggle">Start GPS</button>
+  <button class="full" id="audioToggle" style="margin-top:8px;">Activeer audio (vereist op iOS/Safari)</button>
+</div>
+
+<div class="panel">
+  <h2>Nieuwe zone toevoegen</h2>
+  <div class="row">
+    <input type="text" id="zoneName" placeholder="Naam (bv. Voortuin)">
+  </div>
+  <div class="row">
+    <input type="number" id="zoneLat" placeholder="Latitude" step="0.000001">
+    <input type="number" id="zoneLon" placeholder="Longitude" step="0.000001">
+  </div>
+  <div class="row">
+    <input type="number" id="zoneRadius" placeholder="Radius (meter, bv. 25)" value="25">
+    <button class="use-current" id="useCurrentBtn">Gebruik huidige locatie</button>
+  </div>
+  <button class="full primary" id="addZoneBtn">Zone toevoegen</button>
+</div>
+
+<div class="panel">
+  <h2>Zones (<span id="zoneCount">0</span>)</h2>
+  <div id="zoneList"></div>
+  <div id="emptyState" class="sub" style="margin:0;">Nog geen zones toegevoegd.</div>
+</div>
+
+<div class="footnote">
+  Crossfade-logica: gain = (1 − afstand/radius)², geclampt tussen 0 en 1, exact zoals in de productie-PWA. Geen audiobestanden nodig: elke zone gebruikt een eigen oscillatortoon (sinus) op een andere frequentie, puur om de GPS/audio-koppeling te testen. Werkt het beste buiten, met telefoon in handen (niet in broekzak, voor betere GPS-nauwkeurigheid).
+</div>
+
+<script>
+(function() {
+  const zones = [];
+  let watchId = null;
+  let currentPos = null;
+  let audioCtx = null;
+  const zoneAudioNodes = {}; // id -> { osc, gain }
+  let nextZoneId = 1;
+
+  const els = {
+    gpsStatus: document.getElementById('gpsStatus'),
+    accValue: document.getElementById('accValue'),
+    latValue: document.getElementById('latValue'),
+    lonValue: document.getElementById('lonValue'),
+    gpsToggle: document.getElementById('gpsToggle'),
+    audioToggle: document.getElementById('audioToggle'),
+    zoneName: document.getElementById('zoneName'),
+    zoneLat: document.getElementById('zoneLat'),
+    zoneLon: document.getElementById('zoneLon'),
+    zoneRadius: document.getElementById('zoneRadius'),
+    useCurrentBtn: document.getElementById('useCurrentBtn'),
+    addZoneBtn: document.getElementById('addZoneBtn'),
+    zoneList: document.getElementById('zoneList'),
+    zoneCount: document.getElementById('zoneCount'),
+    emptyState: document.getElementById('emptyState'),
+  };
+
+  // Haversine afstand in meters
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = (d) => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2) ** 2 +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLon/2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  function gainForDistance(distance, radius) {
+    if (distance >= radius) return 0;
+    const raw = 1 - (distance / radius);
+    return Math.max(0, Math.min(1, raw * raw));
+  }
+
+  // --- Audio setup ---
+  function ensureAudioContext() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AC();
+    }
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+    return audioCtx;
+  }
+
+  function frequencyForIndex(i) {
+    // Aangename, onderscheidbare tonen, geen harde bijklanken
+    const base = [220, 277, 330, 392, 440, 523];
+    return base[i % base.length];
+  }
+
+  function createZoneAudio(zone) {
+    const ctx = ensureAudioContext();
+    const osc = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = frequencyForIndex(zone.index);
+    gainNode.gain.value = 0;
+    osc.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    osc.start();
+    zoneAudioNodes[zone.id] = { osc, gain: gainNode };
+  }
+
+  function setZoneGain(id, value) {
+    const node = zoneAudioNodes[id];
+    if (node && audioCtx) {
+      node.gain.gain.setTargetAtTime(value, audioCtx.currentTime, 0.08);
+    }
+  }
+
+  els.audioToggle.addEventListener('click', () => {
+    ensureAudioContext();
+    zones.forEach(z => {
+      if (!zoneAudioNodes[z.id]) createZoneAudio(z);
+    });
+    els.audioToggle.textContent = 'Audio actief';
+    els.audioToggle.disabled = true;
+  });
+
+  // --- GPS ---
+  function startGPS() {
+    if (!navigator.geolocation) {
+      alert('Geolocation wordt niet ondersteund door deze browser.');
+      return;
+    }
+    els.gpsStatus.textContent = 'zoeken…';
+    watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
+      enableHighAccuracy: true,
+      maximumAge: 1000,
+      timeout: 15000
+    });
+    els.gpsToggle.textContent = 'Stop GPS';
+  }
+
+  function stopGPS() {
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    }
+    els.gpsStatus.textContent = 'gestopt';
+    els.gpsToggle.textContent = 'Start GPS';
+    zones.forEach(z => {
+      setZoneGain(z.id, 0);
+      updateZoneUI(z, null, 0);
+    });
+  }
+
+  function onPosition(pos) {
+    currentPos = pos.coords;
+    els.gpsStatus.textContent = 'actief';
+    els.accValue.textContent = Math.round(pos.coords.accuracy) + ' m';
+    els.latValue.textContent = pos.coords.latitude.toFixed(6);
+    els.lonValue.textContent = pos.coords.longitude.toFixed(6);
+    updateAllZones();
+  }
+
+  function onPositionError(err) {
+    els.gpsStatus.textContent = 'fout: ' + err.message;
+  }
+
+  els.gpsToggle.addEventListener('click', () => {
+    if (watchId === null) startGPS(); else stopGPS();
+  });
+
+  // --- Zones ---
+  function updateAllZones() {
+    if (!currentPos) return;
+    zones.forEach(z => {
+      const dist = haversine(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
+      const gain = gainForDistance(dist, z.radius);
+      setZoneGain(z.id, gain);
+      updateZoneUI(z, dist, gain);
+    });
+  }
+
+  function updateZoneUI(zone, dist, gain) {
+    const fill = document.getElementById('fill-' + zone.id);
+    const meta = document.getElementById('meta-' + zone.id);
+    const pill = document.getElementById('pill-' + zone.id);
+    if (fill) fill.style.width = (gain * 100).toFixed(0) + '%';
+    if (meta) {
+      meta.textContent = dist === null
+        ? `radius ${zone.radius} m`
+        : `${Math.round(dist)} m van zone · radius ${zone.radius} m · gain ${(gain).toFixed(2)}`;
+    }
+    if (pill) {
+      if (gain > 0) {
+        pill.textContent = 'hoorbaar';
+        pill.classList.remove('off');
+      } else {
+        pill.textContent = 'stil';
+        pill.classList.add('off');
+      }
+    }
+  }
+
+  function renderZoneList() {
+    els.zoneList.innerHTML = '';
+    els.zoneCount.textContent = zones.length;
+    els.emptyState.style.display = zones.length ? 'none' : 'block';
+    zones.forEach(zone => {
+      const div = document.createElement('div');
+      div.className = 'zone';
+      div.innerHTML = `
+        <div class="zone-head">
+          <div>
+            <div class="zone-name">${zone.name}</div>
+          </div>
+          <span class="pill off" id="pill-${zone.id}">stil</span>
+        </div>
+        <div class="zone-meta" id="meta-${zone.id}">radius ${zone.radius} m</div>
+        <div class="gain-bar-track"><div class="gain-bar-fill" id="fill-${zone.id}"></div></div>
+        <button class="remove-btn" data-id="${zone.id}">Verwijderen</button>
+      `;
+      els.zoneList.appendChild(div);
+    });
+    els.zoneList.querySelectorAll('.remove-btn').forEach(btn => {
+      btn.addEventListener('click', () => removeZone(parseInt(btn.dataset.id)));
+    });
+  }
+
+  function addZone() {
+    const name = els.zoneName.value.trim();
+    const lat = parseFloat(els.zoneLat.value);
+    const lon = parseFloat(els.zoneLon.value);
+    const radius = parseFloat(els.zoneRadius.value) || 25;
+
+    if (!name) { alert('Geef de zone een naam.'); return; }
+    if (isNaN(lat) || isNaN(lon)) { alert('Vul geldige lat/lon waarden in, of gebruik "Gebruik huidige locatie".'); return; }
+
+    const zone = { id: nextZoneId++, name, lat, lon, radius, index: zones.length };
+    zones.push(zone);
+    renderZoneList();
+
+    if (audioCtx) createZoneAudio(zone);
+
+    els.zoneName.value = '';
+    els.zoneLat.value = '';
+    els.zoneLon.value = '';
+    els.zoneRadius.value = '25';
+
+    if (currentPos) updateAllZones();
+  }
+
+  function removeZone(id) {
+    const idx = zones.findIndex(z => z.id === id);
+    if (idx === -1) return;
+    const node = zoneAudioNodes[id];
+    if (node) {
+      try { node.osc.stop(); } catch(e) {}
+      node.osc.disconnect();
+      node.gain.disconnect();
+      delete zoneAudioNodes[id];
+    }
+    zones.splice(idx, 1);
+    renderZoneList();
+  }
+
+  els.addZoneBtn.addEventListener('click', addZone);
+
+  els.useCurrentBtn.addEventListener('click', () => {
+    if (!currentPos) {
+      alert('Start eerst GPS en wacht tot er een positie binnenkomt.');
+      return;
+    }
+    els.zoneLat.value = currentPos.latitude.toFixed(6);
+    els.zoneLon.value = currentPos.longitude.toFixed(6);
+  });
+
+  renderZoneList();
+})();
+</script>
+
+</body>
+</html>
