@@ -242,8 +242,8 @@
     Akoestiek van de plek waar jij loopt (bv. open straat vs. onder bomen), toegepast op alles wat klinkt — niet per zone. Voor nu een vaste waarde om mee te testen.
   </div>
   <div class="row" style="align-items:center;">
-    <input type="range" id="reverbSlider" min="0" max="100" value="30" style="flex:1;">
-    <span class="pill" id="reverbValue" style="min-width:42px; text-align:center;">30%</span>
+    <input type="range" id="reverbSlider" min="0" max="100" value="100" style="flex:1;">
+    <span class="pill" id="reverbValue" style="min-width:42px; text-align:center;">100%</span>
   </div>
 </div>
 
@@ -278,7 +278,7 @@
   <br><br>
   Reverb (experimenteel, nu op output-niveau): één gedeelde ConvolverNode simuleert de akoestiek van de plek waar JIJ loopt — niet meer per zone gekoppeld aan afstand-tot-bron, maar toegepast op de volledige mix. Dit benadert beter wat reverb feitelijk is: een eigenschap van de ruimte om je heen (open straat versus bijvoorbeeld onder de lindenlaan), niet van elk afzonderlijk geluid. Werkt via een synthetische, procedureel gegenereerde impulse response (schaarse vroege reflecties, snelle decay) — een placeholder voor een toekomstige opname op locatie. De wet/dry-balans is voor nu één instelbare schuif (geen locatiekoppeling), bedoeld om te voelen of dit principe het juiste effect geeft voordat het later gekoppeld wordt aan specifieke omgevingstypes langs de route.
   <br><br>
-  Drie aanpassingen na veldtest: (1) volumecurve is nu logaritmisch i.p.v. kwadratisch — sneller verlies dichtbij het punt, geleidelijker uitvlakkend, dichter bij hoe gehoor zelf werkt. (2) Kompas-demping is adaptief: kleine sensorruis wordt sterk gefilterd, maar bij een duidelijke, snelle draai volgt de richting veel sneller, zodat ruimtelijkheid niet meer "achterloopt". (3) Een lowpass-filter per zone dempt geleidelijk de hoge frequenties naarmate je verder van het punt bent (luchtabsorptie-simulatie) — dichtbij klinkt het open en scherp, ver weg dof, als extra psychoakoestische afstandscue naast volume.
+  Drie aanpassingen na veldtest: (1) volumecurve is nu logaritmisch i.p.v. kwadratisch — sneller verlies dichtbij het punt, geleidelijker uitvlakkend, dichter bij hoe gehoor zelf werkt. (2) Kompasrichting wordt nu vrijwel direct gevolgd (geen brede demping meer) — alleen evidente sensor-glitches (een fysiek onmogelijke sprong binnen één meting) worden genegeerd, zodat de ruimtelijke audio niet meer achterloopt op de richting waarin je kijkt. (3) Een lowpass-filter per zone dempt geleidelijk de hoge frequenties naarmate je verder van het punt bent (luchtabsorptie-simulatie) — dichtbij klinkt het open en scherp, ver weg dof, als extra psychoakoestische afstandscue naast volume.
 </div>
 
 <script>
@@ -378,20 +378,19 @@
       smoothedHeading = heading;
     } else {
       const delta = shortestAngleDelta(smoothedHeading, heading);
-      // Adaptieve demping: bij kleine afwijkingen (typische sensorruis, een paar
-      // graden) dempen we sterk om jitter te onderdrukken. Bij grote, snelle
-      // veranderingen (je draait daadwerkelijk) laten we de waarde veel sneller
-      // volgen, anders "sleept" de ruimtelijke audio merkbaar achter je beweging aan.
       const absDelta = Math.abs(delta);
-      let factor;
-      if (absDelta < 4) {
-        factor = 0.10;       // kleine ruis: sterk dempen
-      } else if (absDelta < 20) {
-        factor = 0.35;       // gematigde beweging: gemiddeld volgen
-      } else {
-        factor = 0.6;        // duidelijke draai: snel volgen, weinig vertraging
+      // Geen brede demping meer: het kompas zelf is al stabiel genoeg om bijna
+      // 1-op-1 te volgen. We filteren alleen evidente sensor-glitches — een
+      // sprong groter dan fysiek mogelijk binnen één event (telefoon draait niet
+      // in een paar milliseconden 100°+ rond) wordt genegeerd in plaats van
+      // gevolgd, zodat één rare uitschieter niet meteen de richting laat springen.
+      if (absDelta > 100) {
+        // Waarschijnlijk een sensor-glitch: negeer deze ene meting volledig.
+        return;
       }
-      smoothedHeading = (smoothedHeading + delta * factor + 360) % 360;
+      // Lichte demping (vrijwel direct, maar voorkomt de allerlaatste schoksgewijze
+      // sub-graad-jitter) — geen vertraging die merkbaar is t.o.v. de UI-snelheid.
+      smoothedHeading = (smoothedHeading + delta * 0.85 + 360) % 360;
     }
     updateCompassUI();
   }
@@ -430,7 +429,7 @@
   let reverbConvolver = null;
   let masterDry = null;
   let masterWet = null;
-  let globalWetAmount = 0.3; // instelbare omgevings-reverb, 0 = volledig droog, 1 = volledig nat
+  let globalWetAmount = 1.0; // instelbare omgevings-reverb, 0 = volledig droog, 1 = volledig nat (standaard: vol wet, o.b.v. veldtest)
 
   function ensureAudioContext() {
     if (!audioCtx) {
@@ -683,8 +682,11 @@
           const x = Math.sin(rad);
           const zPos = -Math.cos(rad);
           if (node.panner.positionX) {
-            node.panner.positionX.setTargetAtTime(x, audioCtx.currentTime, 0.15);
-            node.panner.positionZ.setTargetAtTime(zPos, audioCtx.currentTime, 0.15);
+            // Lage tijdconstante: alleen om de allerkleinste digitale knik tussen
+            // animatieframes glad te strijken, niet om het kompas zelf te dempen
+            // (dat gebeurt al, licht, in handleOrientation).
+            node.panner.positionX.setTargetAtTime(x, audioCtx.currentTime, 0.03);
+            node.panner.positionZ.setTargetAtTime(zPos, audioCtx.currentTime, 0.03);
           }
         }
       });
