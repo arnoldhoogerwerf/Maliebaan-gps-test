@@ -237,6 +237,17 @@
 </div>
 
 <div class="panel">
+  <h2>Omgevings-reverb</h2>
+  <div class="sub" style="margin-bottom:10px;">
+    Akoestiek van de plek waar jij loopt (bv. open straat vs. onder bomen), toegepast op alles wat klinkt — niet per zone. Voor nu een vaste waarde om mee te testen.
+  </div>
+  <div class="row" style="align-items:center;">
+    <input type="range" id="reverbSlider" min="0" max="100" value="30" style="flex:1;">
+    <span class="pill" id="reverbValue" style="min-width:42px; text-align:center;">30%</span>
+  </div>
+</div>
+
+<div class="panel">
   <h2>Nieuwe zone toevoegen</h2>
   <div class="row">
     <input type="text" id="zoneName" placeholder="Naam (bv. Voortuin)">
@@ -265,7 +276,9 @@
   <br><br>
   Ruimtelijke laag (experimenteel): elke zone wordt via een PannerNode (HRTF) geplaatst in de richting waarin hij daadwerkelijk ligt, op basis van de peiling (bearing) tussen jouw GPS-positie en de zone, gecorrigeerd met je kompasrichting. Het volume blijft volledig bepaald door afstand (rolloffFactor = 0); de panner regelt alléén richting, niet sterkte. Kompasdata is van nature ruizig — er zit een sterke demping op (smoothing) om schokkerige richtingswisselingen te voorkomen, maar verwacht geen perfecte precisie. Activeer de richtingssensor pas ná audio, en geef toestemming wanneer iOS daarom vraagt.
   <br><br>
-  Reverb (experimenteel): één gedeelde ConvolverNode simuleert een korte buiten-akoestiek (schaarse vroege reflecties, snelle decay, geen kamerachtige nagalm) via een procedureel gegenereerde impulse response — dus geen audiobestand, maar een placeholder voor een toekomstige opname op locatie. Per zone loopt het signaal parallel via een dry-pad (direct) en een wet-pad (door de reverb), waarbij de verhouding meebeweegt met hoe ver je je binnen het hoorbare bereik van die zone bevindt: dichtbij overwegend dry, richting de rand van de zone geleidelijk meer wet.
+  Reverb (experimenteel, nu op output-niveau): één gedeelde ConvolverNode simuleert de akoestiek van de plek waar JIJ loopt — niet meer per zone gekoppeld aan afstand-tot-bron, maar toegepast op de volledige mix. Dit benadert beter wat reverb feitelijk is: een eigenschap van de ruimte om je heen (open straat versus bijvoorbeeld onder de lindenlaan), niet van elk afzonderlijk geluid. Werkt via een synthetische, procedureel gegenereerde impulse response (schaarse vroege reflecties, snelle decay) — een placeholder voor een toekomstige opname op locatie. De wet/dry-balans is voor nu één instelbare schuif (geen locatiekoppeling), bedoeld om te voelen of dit principe het juiste effect geeft voordat het later gekoppeld wordt aan specifieke omgevingstypes langs de route.
+  <br><br>
+  Drie aanpassingen na veldtest: (1) volumecurve is nu logaritmisch i.p.v. kwadratisch — sneller verlies dichtbij het punt, geleidelijker uitvlakkend, dichter bij hoe gehoor zelf werkt. (2) Kompas-demping is adaptief: kleine sensorruis wordt sterk gefilterd, maar bij een duidelijke, snelle draai volgt de richting veel sneller, zodat ruimtelijkheid niet meer "achterloopt". (3) Een lowpass-filter per zone dempt geleidelijk de hoge frequenties naarmate je verder van het punt bent (luchtabsorptie-simulatie) — dichtbij klinkt het open en scherp, ver weg dof, als extra psychoakoestische afstandscue naast volume.
 </div>
 
 <script>
@@ -285,6 +298,8 @@
     gpsToggle: document.getElementById('gpsToggle'),
     audioToggle: document.getElementById('audioToggle'),
     compassToggle: document.getElementById('compassToggle'),
+    reverbSlider: document.getElementById('reverbSlider'),
+    reverbValue: document.getElementById('reverbValue'),
     zoneName: document.getElementById('zoneName'),
     zoneLat: document.getElementById('zoneLat'),
     zoneLon: document.getElementById('zoneLon'),
@@ -311,8 +326,15 @@
 
   function gainForDistance(distance, radius) {
     if (distance >= radius) return 0;
-    const raw = 1 - (distance / radius);
-    return Math.max(0, Math.min(1, raw * raw));
+    // Genormaliseerde afstand (0 = op het punt, 1 = op de rand van de zone)
+    const norm = distance / radius;
+    // Logaritmisch-achtige curve i.p.v. lineair/kwadratisch: menselijke geluids-
+    // perceptie is zelf al logaritmisch (dB-schaal), waardoor een lineaire volume-
+    // curve voelt als een lang "plateau" dichtbij voordat het pas laat wegvalt.
+    // Hier gebruiken we een inverse-log curve: snel verlies vlak bij de rand,
+    // maar een natuurlijker, geleidelijker verloop dan kwadratisch.
+    const raw = 1 - Math.log10(1 + norm * 9) / Math.log10(10); // log10(1..10) genormaliseerd naar 0..1
+    return Math.max(0, Math.min(1, raw));
   }
 
   // Peiling (bearing) in graden van punt 1 naar punt 2, 0 = noord, 90 = oost
@@ -356,7 +378,20 @@
       smoothedHeading = heading;
     } else {
       const delta = shortestAngleDelta(smoothedHeading, heading);
-      smoothedHeading = (smoothedHeading + delta * 0.12 + 360) % 360; // lage factor = sterke demping
+      // Adaptieve demping: bij kleine afwijkingen (typische sensorruis, een paar
+      // graden) dempen we sterk om jitter te onderdrukken. Bij grote, snelle
+      // veranderingen (je draait daadwerkelijk) laten we de waarde veel sneller
+      // volgen, anders "sleept" de ruimtelijke audio merkbaar achter je beweging aan.
+      const absDelta = Math.abs(delta);
+      let factor;
+      if (absDelta < 4) {
+        factor = 0.10;       // kleine ruis: sterk dempen
+      } else if (absDelta < 20) {
+        factor = 0.35;       // gematigde beweging: gemiddeld volgen
+      } else {
+        factor = 0.6;        // duidelijke draai: snel volgen, weinig vertraging
+      }
+      smoothedHeading = (smoothedHeading + delta * factor + 360) % 360;
     }
     updateCompassUI();
   }
@@ -393,7 +428,9 @@
   let rafId = null;
   let audioListener = null;
   let reverbConvolver = null;
-  let reverbBus = null;
+  let masterDry = null;
+  let masterWet = null;
+  let globalWetAmount = 0.3; // instelbare omgevings-reverb, 0 = volledig droog, 1 = volledig nat
 
   function ensureAudioContext() {
     if (!audioCtx) {
@@ -407,15 +444,17 @@
       limiter.ratio.value = 12;
       limiter.attack.value = 0.003;
       limiter.release.value = 0.25;
+      limiter.connect(audioCtx.destination);
 
-      // Mastergain: extra headroom, geschaald naar aantal zones
+      // Mastergain: extra headroom, geschaald naar aantal zones. Alle zones
+      // (droog, zonder eigen reverb) komen hier samen.
       masterGain = audioCtx.createGain();
       masterGain.gain.value = 0.8;
 
-      masterGain.connect(limiter);
-      limiter.connect(audioCtx.destination);
-
-      // --- Reverb-bus (gedeeld door alle zones) ---
+      // --- Omgevings-reverb (op de totale output, niet per zone) ---
+      // Dit simuleert de akoestiek van de plek waar JIJ loopt (open straat versus
+      // bijvoorbeeld onder een lindenlaan), in plaats van een eigenschap van elk
+      // afzonderlijk geluid. Alles wat klinkt deelt dezelfde ruimte-akoestiek.
       // Eén ConvolverNode met een synthetische "buiten-op-straat"-IR: schaarse,
       // korte vroege reflecties (geen dichte kamer-reflecties) gevolgd door een
       // relatief snelle decay (geen lang nakaatsend plafond zoals binnen).
@@ -425,10 +464,20 @@
       reverbConvolver.buffer = generateOutdoorImpulseResponse(audioCtx);
       reverbConvolver.normalize = true;
 
-      reverbBus = audioCtx.createGain();
-      reverbBus.gain.value = 1;
-      reverbBus.connect(reverbConvolver);
-      reverbConvolver.connect(masterGain);
+      // Parallelle dry/wet-splitsing van de volledige mix. globalWetAmount is
+      // voor nu een vaste, instelbare waarde (geen locatiekoppeling) — bedoeld
+      // om te voelen of omgevings-reverb het juiste idee is, voordat dat later
+      // gekoppeld wordt aan waar je je bevindt (straat/lindenlaan/etc).
+      masterDry = audioCtx.createGain();
+      masterWet = audioCtx.createGain();
+      masterDry.gain.value = 1 - globalWetAmount;
+      masterWet.gain.value = globalWetAmount;
+
+      masterGain.connect(masterDry);
+      masterGain.connect(reverbConvolver);
+      reverbConvolver.connect(masterWet);
+      masterDry.connect(limiter);
+      masterWet.connect(limiter);
 
       // AudioListener: de "oren" van de luisteraar in de 3D-ruimte. We zetten 'm
       // standaard op kijkend naar het noorden (0,0,-1) en draaien 'm continu mee
@@ -541,28 +590,26 @@
     filter.connect(gainNode);
     gainNode.connect(panner);
 
-    // Dry/wet-splitsing: het droge (directe) signaal gaat rechtstreeks naar de
-    // master, het natte (reverb) deel via de gedeelde reverb-bus. De verhouding
-    // tussen deze twee wordt per zone bijgewerkt op basis van afstand: dichtbij
-    // overwegend dry/direct, verder weg geleidelijk meer wet/omgevingsklank —
-    // alsof het geluid meer "door de straat" naar je toe komt.
-    const dryGain = ctx.createGain();
-    dryGain.gain.value = 1;
-    const wetGain = ctx.createGain();
-    wetGain.gain.value = 0;
+    // Afstand-lowpass: simuleert luchtabsorptie (air absorption) — hoge
+    // frequenties dempen sneller dan lage naarmate geluid verder moet reizen.
+    // Dichtbij: open/helder (hoge cutoff). Ver weg: dof/gedempt (lage cutoff).
+    // Dit is een psychoakoestische afstandscue bovenop volume, en bijzonder
+    // relevant bij deze synthetische, ruisrijke klanken die zonder deze demping
+    // op elke afstand even "scherp" blijven klinken.
+    const distanceFilter = ctx.createBiquadFilter();
+    distanceFilter.type = 'lowpass';
+    distanceFilter.frequency.value = 8000; // start: volledig open, wordt bijgewerkt o.b.v. afstand
+    distanceFilter.Q.value = 0.7;
 
-    panner.connect(dryGain);
-    panner.connect(wetGain);
-    dryGain.connect(masterGain);
-    wetGain.connect(reverbBus);
+    panner.connect(distanceFilter);
+    distanceFilter.connect(masterGain);
 
     const node = {
-      filter, panner,
+      filter, panner, distanceFilter,
       gain: gainNode,
-      dryGain, wetGain,
       currentValue: 0,     // wat er nu daadwerkelijk klinkt (algeheel volume)
       targetValue: 0,      // waar naartoe geïnterpoleerd wordt (algeheel volume)
-      currentWet: 0,        // huidige wet-fractie (0 = volledig dry, 1 = volledig wet)
+      currentCutoff: 8000,   // huidige lowpass-cutoff (Hz), geïnterpoleerd net als wet/gain
       rhythm,
       timerId: null
     };
@@ -618,12 +665,10 @@
         if (node.currentValue > 0.01) activeCount++;
         updateGainMeter(z.id, node.currentValue);
 
-        // Wet/dry-verhouding meebewegen met afstand: dichtbij overwegend dry/direct,
-        // richting de rand van het hoorbare bereik geleidelijk meer wet/omgevingsklank.
-        if (node.dryGain && node.wetGain && typeof z.wetTarget === 'number') {
-          node.currentWet += (z.wetTarget - node.currentWet) * smoothing;
-          node.dryGain.gain.value = 1 - node.currentWet;
-          node.wetGain.gain.value = node.currentWet;
+        // Afstand-lowpass: cutoff-frequentie meebewegen met afstand (luchtabsorptie-simulatie).
+        if (node.distanceFilter && typeof z.cutoffTarget === 'number') {
+          node.currentCutoff += (z.cutoffTarget - node.currentCutoff) * smoothing;
+          node.distanceFilter.frequency.value = node.currentCutoff;
         }
 
         // Ruimtelijke positionering: hoek van de zone t.o.v. waar je kijkt (kompas).
@@ -717,6 +762,16 @@
     }
   });
 
+  els.reverbSlider.addEventListener('input', () => {
+    const pct = parseInt(els.reverbSlider.value, 10);
+    globalWetAmount = pct / 100;
+    els.reverbValue.textContent = pct + '%';
+    if (audioCtx && masterDry && masterWet) {
+      masterDry.gain.setTargetAtTime(1 - globalWetAmount, audioCtx.currentTime, 0.1);
+      masterWet.gain.setTargetAtTime(globalWetAmount, audioCtx.currentTime, 0.1);
+    }
+  });
+
   // --- GPS ---
   function startGPS() {
     if (!navigator.geolocation) {
@@ -769,10 +824,13 @@
       const dist = haversine(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
       const gain = gainForDistance(dist, z.radius);
       z.bearingFromUser = bearing(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
-      // Wet-fractie: 0 vlak bij het centrum van de zone, oplopend naar ~0.6 bij de
-      // rand van het hoorbare bereik. Geclampt zodat hij buiten bereik niet verder oploopt.
       const proximity = Math.min(1, dist / z.radius); // 0 = op het punt zelf, 1 = op de rand
-      z.wetTarget = Math.min(0.6, proximity * 0.6);
+      // Lowpass-cutoff: simuleert luchtabsorptie. Dichtbij (proximity 0) volledig
+      // open (8000 Hz), bij de rand (proximity 1) flink gedempt (~900 Hz). Niet
+      // lineair: de demping zet pas goed in vanaf de helft van het bereik, zodat
+      // het niet meteen bij elke kleine stap hoorbaar verandert.
+      const cutoffCurve = Math.pow(proximity, 1.6);
+      z.cutoffTarget = 8000 - cutoffCurve * 7100;
       setZoneGain(z.id, gain);
       updateZoneUI(z, dist, gain);
     });
@@ -891,8 +949,7 @@
       try { if (node.filter) node.filter.disconnect(); } catch(e) {}
       try { node.gain.disconnect(); } catch(e) {}
       try { if (node.panner) node.panner.disconnect(); } catch(e) {}
-      try { if (node.dryGain) node.dryGain.disconnect(); } catch(e) {}
-      try { if (node.wetGain) node.wetGain.disconnect(); } catch(e) {}
+      try { if (node.distanceFilter) node.distanceFilter.disconnect(); } catch(e) {}
       delete zoneAudioNodes[id];
     }
     zones.splice(idx, 1);
