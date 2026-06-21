@@ -500,12 +500,12 @@
   // ook qua karakter (tempo/klankkleur) uit elkaar te houden zijn, niet alleen qua richting.
   function rhythmForIndex(i) {
     const patterns = [
-      { interval: 0.45, burst: 0.05, filterFreq: 2200, q: 1.2 },
-      { interval: 0.65, burst: 0.04, filterFreq: 3200, q: 1.5 },
-      { interval: 0.35, burst: 0.06, filterFreq: 1800, q: 1.0 },
-      { interval: 0.8,  burst: 0.045, filterFreq: 4000, q: 1.8 },
-      { interval: 0.5,  burst: 0.035, filterFreq: 2700, q: 1.3 },
-      { interval: 0.7,  burst: 0.055, filterFreq: 1500, q: 1.1 },
+      { interval: 1.4,  burst: 0.05,  filterFreq: 2200, q: 1.2 },
+      { interval: 1.9,  burst: 0.04,  filterFreq: 3200, q: 1.5 },
+      { interval: 1.1,  burst: 0.06,  filterFreq: 1800, q: 1.0 },
+      { interval: 2.3,  burst: 0.045, filterFreq: 4000, q: 1.8 },
+      { interval: 1.6,  burst: 0.035, filterFreq: 2700, q: 1.3 },
+      { interval: 2.1,  burst: 0.055, filterFreq: 1500, q: 1.1 },
     ];
     return patterns[i % patterns.length];
   }
