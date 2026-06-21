@@ -390,7 +390,7 @@
       }
       // Lichte demping (vrijwel direct, maar voorkomt de allerlaatste schoksgewijze
       // sub-graad-jitter) — geen vertraging die merkbaar is t.o.v. de UI-snelheid.
-      smoothedHeading = (smoothedHeading + delta * 0.85 + 360) % 360;
+      smoothedHeading = (smoothedHeading + delta * 0.95 + 360) % 360;
     }
     updateCompassUI();
   }
@@ -682,11 +682,13 @@
           const x = Math.sin(rad);
           const zPos = -Math.cos(rad);
           if (node.panner.positionX) {
-            // Lage tijdconstante: alleen om de allerkleinste digitale knik tussen
-            // animatieframes glad te strijken, niet om het kompas zelf te dempen
-            // (dat gebeurt al, licht, in handleOrientation).
-            node.panner.positionX.setTargetAtTime(x, audioCtx.currentTime, 0.03);
-            node.panner.positionZ.setTargetAtTime(zPos, audioCtx.currentTime, 0.03);
+            // Directe toewijzing i.p.v. setTargetAtTime: de smoothing gebeurt al
+            // in JavaScript (handleOrientation, vrijwel 1-op-1 met het kompas).
+            // setTargetAtTime voegt daar exponentieel een extra vertraging aan toe
+            // (ook bij een lage tijdconstante duurt het ~5x die waarde voordat de
+            // waarde het doel nadert) — dat was de resterende, voelbare delay.
+            node.panner.positionX.value = x;
+            node.panner.positionZ.value = zPos;
           }
         }
       });
