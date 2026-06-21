@@ -247,13 +247,6 @@
   </div>
 </div>
 
-<div class="panel">
-  <h2>Ruimtelijk model</h2>
-  <div class="sub" style="margin-bottom:10px;">
-    HRTF klinkt rijker (ook voor/achter-gevoel) maar reageert merkbaar trager bij snel draaien. Equalpower is puur links/rechts, geen voor/achter, maar vrijwel instant.
-  </div>
-  <button class="full" id="panningModelToggle">Model: HRTF (tik om te wisselen naar Equalpower)</button>
-</div>
 
 <div class="panel">
   <h2>Nieuwe zone toevoegen</h2>
@@ -438,7 +431,6 @@
   let masterDry = null;
   let masterWet = null;
   let globalWetAmount = 1.0; // instelbare omgevings-reverb, 0 = volledig droog, 1 = volledig nat (standaard: vol wet, o.b.v. veldtest)
-  let currentPanningModel = 'HRTF'; // 'HRTF' (rijker, maar merkbaar trager bij snel draaien) of 'equalpower' (puur links/rechts, vrijwel instant)
 
   function ensureAudioContext() {
     if (!audioCtx) {
@@ -586,7 +578,7 @@
     // HRTF zorgt voor een natuurlijker links/rechts/voor/achter-gevoel dan simpele stereopanning,
     // en werkt merkbaar beter op korte transiënten zoals deze bursts dan op continue tonen.
     const panner = ctx.createPanner();
-    panner.panningModel = currentPanningModel;
+    panner.panningModel = 'HRTF';
     panner.distanceModel = 'linear';
     panner.refDistance = 1;
     panner.maxDistance = 1000; // afstandsdemping laten we los van onze eigen gain-berekening
@@ -783,17 +775,6 @@
       masterDry.gain.setTargetAtTime(1 - globalWetAmount, audioCtx.currentTime, 0.1);
       masterWet.gain.setTargetAtTime(globalWetAmount, audioCtx.currentTime, 0.1);
     }
-  });
-
-  document.getElementById('panningModelToggle').addEventListener('click', (e) => {
-    currentPanningModel = currentPanningModel === 'HRTF' ? 'equalpower' : 'HRTF';
-    // Bestaande panners direct omschakelen, geen herstart van de audio nodig
-    Object.values(zoneAudioNodes).forEach(node => {
-      if (node.panner) node.panner.panningModel = currentPanningModel;
-    });
-    e.target.textContent = currentPanningModel === 'HRTF'
-      ? 'Model: HRTF (tik om te wisselen naar Equalpower)'
-      : 'Model: Equalpower (tik om te wisselen naar HRTF)';
   });
 
   // --- GPS ---
