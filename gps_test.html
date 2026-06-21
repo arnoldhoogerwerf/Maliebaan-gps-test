@@ -226,9 +226,14 @@
       <div class="label">Lon</div>
       <div class="value" id="lonValue">—</div>
     </div>
+    <div class="status-item">
+      <div class="label">Kompas</div>
+      <div class="value" id="compassValue">—</div>
+    </div>
   </div>
   <button class="full primary" id="gpsToggle">Start GPS</button>
   <button class="full" id="audioToggle" style="margin-top:8px;">Activeer audio (vereist op iOS/Safari)</button>
+  <button class="full" id="compassToggle" style="margin-top:8px;">Activeer richtingssensor (voor ruimtelijk geluid)</button>
 </div>
 
 <div class="panel">
@@ -256,7 +261,9 @@
 </div>
 
 <div class="footnote">
-  Crossfade-logica: gain = (1 − afstand/radius)², geclampt tussen 0 en 1, exact zoals in de productie-PWA. Geen audiobestanden nodig: elke zone gebruikt een eigen oscillatortoon (sinus) op een andere frequentie, puur om de GPS/audio-koppeling te testen. Werkt het beste buiten, met telefoon in handen (niet in broekzak, voor betere GPS-nauwkeurigheid).
+  Crossfade-logica: gain = (1 − afstand/radius)², geclampt tussen 0 en 1, exact zoals in de productie-PWA. Geen audiobestanden nodig: elke zone speelt korte, ritmische ruisbursts (band-passed witte ruis, mid-high frequenties) op een eigen tempo en klankkleur, beter geschikt om richting/ruimtelijkheid op te beoordelen dan een continue toon. Werkt het beste buiten, met telefoon in handen (niet in broekzak, voor betere GPS-nauwkeurigheid).
+  <br><br>
+  Ruimtelijke laag (experimenteel): elke zone wordt via een PannerNode (HRTF) geplaatst in de richting waarin hij daadwerkelijk ligt, op basis van de peiling (bearing) tussen jouw GPS-positie en de zone, gecorrigeerd met je kompasrichting. Het volume blijft volledig bepaald door afstand (rolloffFactor = 0); de panner regelt alléén richting, niet sterkte. Kompasdata is van nature ruizig — er zit een sterke demping op (smoothing) om schokkerige richtingswisselingen te voorkomen, maar verwacht geen perfecte precisie. Activeer de richtingssensor pas ná audio, en geef toestemming wanneer iOS daarom vraagt.
 </div>
 
 <script>
@@ -275,6 +282,7 @@
     lonValue: document.getElementById('lonValue'),
     gpsToggle: document.getElementById('gpsToggle'),
     audioToggle: document.getElementById('audioToggle'),
+    compassToggle: document.getElementById('compassToggle'),
     zoneName: document.getElementById('zoneName'),
     zoneLat: document.getElementById('zoneLat'),
     zoneLon: document.getElementById('zoneLon'),
@@ -305,10 +313,83 @@
     return Math.max(0, Math.min(1, raw * raw));
   }
 
+  // Peiling (bearing) in graden van punt 1 naar punt 2, 0 = noord, 90 = oost
+  function bearing(lat1, lon1, lat2, lon2) {
+    const toRad = (d) => d * Math.PI / 180;
+    const toDeg = (r) => r * 180 / Math.PI;
+    const dLon = toRad(lon2 - lon1);
+    const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+              Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+    const deg = toDeg(Math.atan2(y, x));
+    return (deg + 360) % 360;
+  }
+
+  // --- Kompas (device orientation) ---
+  // Ruwe kompasdata is zeer ruizig, vooral lopend met telefoon in de hand.
+  // We smoothen met een exponentieel gewogen gemiddelde over de kortste hoekafstand
+  // (zodat de overgang van 359° naar 1° niet als een rare sprong van -358° wordt gezien).
+  let rawHeading = null;       // laatst ontvangen, ongefilterde waarde
+  let smoothedHeading = null;  // gefilterde waarde die we daadwerkelijk gebruiken
+  let compassActive = false;
+
+  function shortestAngleDelta(from, to) {
+    let delta = (to - from + 180) % 360 - 180;
+    return delta < -180 ? delta + 360 : delta;
+  }
+
+  function handleOrientation(event) {
+    let heading = null;
+    if (typeof event.webkitCompassHeading === 'number') {
+      // iOS Safari: al gecorrigeerd t.o.v. magnetisch noorden, 0-360, met de voorkant van het device
+      heading = event.webkitCompassHeading;
+    } else if (typeof event.alpha === 'number') {
+      // Overige browsers: alpha loopt tegen de klok in vanaf het device-startpunt, ruwe benadering
+      heading = (360 - event.alpha) % 360;
+    }
+    if (heading === null) return;
+
+    rawHeading = heading;
+    if (smoothedHeading === null) {
+      smoothedHeading = heading;
+    } else {
+      const delta = shortestAngleDelta(smoothedHeading, heading);
+      smoothedHeading = (smoothedHeading + delta * 0.12 + 360) % 360; // lage factor = sterke demping
+    }
+    updateCompassUI();
+  }
+
+  async function startCompass() {
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      // iOS 13+: expliciete toestemming vereist, alleen aan te vragen via gebruikersinteractie
+      try {
+        const result = await DeviceOrientationEvent.requestPermission();
+        if (result !== 'granted') {
+          safeAlert('Toestemming voor richtingssensor is geweigerd. Ruimtelijke audio werkt hierdoor niet.');
+          return;
+        }
+      } catch (err) {
+        safeAlert('Kon geen toestemming vragen voor de richtingssensor: ' + err.message);
+        return;
+      }
+    }
+    window.addEventListener('deviceorientation', handleOrientation, true);
+    compassActive = true;
+  }
+
+  function updateCompassUI() {
+    const el = document.getElementById('compassValue');
+    if (el && smoothedHeading !== null) {
+      el.textContent = Math.round(smoothedHeading) + '°';
+    }
+  }
+
   // --- Audio setup ---
   let masterGain = null;
   let limiter = null;
   let rafId = null;
+  let audioListener = null;
 
   function ensureAudioContext() {
     if (!audioCtx) {
@@ -330,6 +411,16 @@
       masterGain.connect(limiter);
       limiter.connect(audioCtx.destination);
 
+      // AudioListener: de "oren" van de luisteraar in de 3D-ruimte. We zetten 'm
+      // standaard op kijkend naar het noorden (0,0,-1) en draaien 'm continu mee
+      // met het kompas in de interpolatie-loop.
+      audioListener = audioCtx.listener;
+      if (audioListener.positionX) {
+        audioListener.positionX.value = 0;
+        audioListener.positionY.value = 0;
+        audioListener.positionZ.value = 0;
+      }
+
       startInterpolationLoop();
     }
     if (audioCtx.state === 'suspended') {
@@ -338,64 +429,98 @@
     return audioCtx;
   }
 
-  function frequencyForIndex(i) {
-    // Aangename, onderscheidbare tonen, geen harde bijklanken
-    const base = [220, 277, 330, 392, 440, 523];
-    return base[i % base.length];
+  // Eén gedeelde, vooraf gegenereerde ruisbuffer (2 sec wit ruis), hergebruikt door alle zones.
+  // Voorkomt dat we per zone een nieuwe buffer hoeven te genereren.
+  let sharedNoiseBuffer = null;
+  function getNoiseBuffer(ctx) {
+    if (sharedNoiseBuffer) return sharedNoiseBuffer;
+    const length = ctx.sampleRate * 2;
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    sharedNoiseBuffer = buffer;
+    return buffer;
+  }
+
+  // Verschillende ritmes en mid-high frequentiebanden per zone-index, zodat zones
+  // ook qua karakter (tempo/klankkleur) uit elkaar te houden zijn, niet alleen qua richting.
+  function rhythmForIndex(i) {
+    const patterns = [
+      { interval: 0.45, burst: 0.05, filterFreq: 2200, q: 1.2 },
+      { interval: 0.65, burst: 0.04, filterFreq: 3200, q: 1.5 },
+      { interval: 0.35, burst: 0.06, filterFreq: 1800, q: 1.0 },
+      { interval: 0.8,  burst: 0.045, filterFreq: 4000, q: 1.8 },
+      { interval: 0.5,  burst: 0.035, filterFreq: 2700, q: 1.3 },
+      { interval: 0.7,  burst: 0.055, filterFreq: 1500, q: 1.1 },
+    ];
+    return patterns[i % patterns.length];
   }
 
   function createZoneAudio(zone) {
     const ctx = ensureAudioContext();
-    const freq = frequencyForIndex(zone.index);
-
-    // Grondtoon
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = freq;
-
-    // Zachte boventoon (octaaf hoger, lager volume) voor wat warmte t.o.v. een kale sinus
-    const overtoneOsc = ctx.createOscillator();
-    overtoneOsc.type = 'sine';
-    overtoneOsc.frequency.value = freq * 2;
-    const overtoneGain = ctx.createGain();
-    overtoneGain.gain.value = 0.18; // bescheiden, blijft op de achtergrond
+    const rhythm = rhythmForIndex(zone.index);
 
     // Gezamenlijke gain die door de interpolatie-loop wordt aangestuurd (afstand -> volume)
     const gainNode = ctx.createGain();
     gainNode.gain.value = 0;
 
-    // Subtiele tremolo: langzame LFO die het volume net iets laat ademen,
-    // zodat de toon niet helemaal statisch/dood klinkt
-    const lfo = ctx.createOscillator();
-    lfo.type = 'sine';
-    lfo.frequency.value = 0.15 + Math.random() * 0.1; // ~6-9 sec per cyclus, licht random zodat zones niet synchroon ademen
-    const lfoDepth = ctx.createGain();
-    lfoDepth.gain.value = 0.06; // hoeveel de tremolo het volume laat schommelen
-    const lfoOffset = ctx.createConstantSource();
-    lfoOffset.offset.value = 1; // basis: volle sterkte, LFO trekt er een beetje vanaf
+    // Bandpass-filter: laat alleen mid-high frequenties van de ruis door,
+    // geeft een "tikkend"/insectachtig karakter in plaats van een dof gesis.
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = rhythm.filterFreq;
+    filter.Q.value = rhythm.q;
 
-    lfo.connect(lfoDepth);
-    const tremoloGain = ctx.createGain();
-    lfoOffset.connect(tremoloGain.gain);
-    lfoDepth.connect(tremoloGain.gain);
+    // PannerNode: plaatst de zone ruimtelijk t.o.v. de listener (jouw positie/kijkrichting).
+    // HRTF zorgt voor een natuurlijker links/rechts/voor/achter-gevoel dan simpele stereopanning,
+    // en werkt merkbaar beter op korte transiënten zoals deze bursts dan op continue tonen.
+    const panner = ctx.createPanner();
+    panner.panningModel = 'HRTF';
+    panner.distanceModel = 'linear';
+    panner.refDistance = 1;
+    panner.maxDistance = 1000; // afstandsdemping laten we los van onze eigen gain-berekening
+    panner.rolloffFactor = 0; // we sturen volume al zelf aan via afstand-tot-zone; panner doet alleen richting
+    panner.positionX.value = 0;
+    panner.positionY.value = 0;
+    panner.positionZ.value = -1; // tijdelijk "voor je", wordt continu bijgewerkt in de interpolatie-loop
 
-    osc.connect(tremoloGain);
-    overtoneOsc.connect(overtoneGain);
-    overtoneGain.connect(tremoloGain);
-    tremoloGain.connect(gainNode);
-    gainNode.connect(masterGain);
+    filter.connect(gainNode);
+    gainNode.connect(panner);
+    panner.connect(masterGain);
 
-    osc.start();
-    overtoneOsc.start();
-    lfo.start();
-    lfoOffset.start();
-
-    zoneAudioNodes[zone.id] = {
-      osc, overtoneOsc, lfo, lfoOffset,
+    const node = {
+      filter, panner,
       gain: gainNode,
       currentValue: 0,   // wat er nu daadwerkelijk klinkt
-      targetValue: 0      // waar naartoe geïnterpoleerd wordt
+      targetValue: 0,    // waar naartoe geïnterpoleerd wordt
+      rhythm,
+      timerId: null
     };
+
+    // Ritmische scheduler: elke `interval` seconden een korte ruisburst afspelen.
+    // Elke burst is een losse BufferSource (vereiste van de Web Audio API: een
+    // source kan maar één keer starten), met een korte attack/decay-envelope
+    // zodat het tikt in plaats van klikt.
+    function scheduleBurst() {
+      const src = ctx.createBufferSource();
+      src.buffer = getNoiseBuffer(ctx);
+      const burstGain = ctx.createGain();
+      const now = ctx.currentTime;
+      burstGain.gain.setValueAtTime(0, now);
+      burstGain.gain.linearRampToValueAtTime(1, now + 0.005); // snelle attack
+      burstGain.gain.exponentialRampToValueAtTime(0.001, now + rhythm.burst); // korte decay
+      src.connect(burstGain);
+      burstGain.connect(filter);
+      src.start(now);
+      src.stop(now + rhythm.burst + 0.02);
+    }
+
+    node.timerId = setInterval(scheduleBurst, rhythm.interval * 1000);
+    scheduleBurst(); // meteen een eerste tik, niet pas na het eerste interval
+
+    zoneAudioNodes[zone.id] = node;
   }
 
   // Doel bijwerken; de daadwerkelijke audio-waarde volgt via de interpolatie-loop hieronder,
@@ -424,6 +549,23 @@
         node.gain.gain.value = node.currentValue;
         if (node.currentValue > 0.01) activeCount++;
         updateGainMeter(z.id, node.currentValue);
+
+        // Ruimtelijke positionering: hoek van de zone t.o.v. waar je kijkt (kompas).
+        // Zonder kompas (nog) plaatsen we de bron simpelweg "voor" je, zodat er
+        // geen geluid wegvalt terwijl je nog op toestemming wacht.
+        if (node.panner) {
+          let relativeAngleDeg = 0;
+          if (smoothedHeading !== null && typeof z.bearingFromUser === 'number') {
+            relativeAngleDeg = z.bearingFromUser - smoothedHeading;
+          }
+          const rad = relativeAngleDeg * Math.PI / 180;
+          const x = Math.sin(rad);
+          const zPos = -Math.cos(rad);
+          if (node.panner.positionX) {
+            node.panner.positionX.setTargetAtTime(x, audioCtx.currentTime, 0.15);
+            node.panner.positionZ.setTargetAtTime(zPos, audioCtx.currentTime, 0.15);
+          }
+        }
       });
       // Mastergain mee laten ademen met aantal actieve zones, als extra veiligheid
       // bovenop de limiter (voorkomt dat 5+ volle zones alsnog samen pieken).
@@ -442,6 +584,20 @@
   }
 
   let wakeLock = null;
+
+  // iOS Safari kan de AudioContext laten suspenden zodra een blokkerende
+  // alert()/confirm()-dialoog verschijnt. Deze helpers hervatten 'm altijd
+  // na het sluiten van de dialoog, ongeacht het antwoord.
+  function safeAlert(message) {
+    alert(message);
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  }
+
+  function safeConfirm(message) {
+    const result = confirm(message);
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    return result;
+  }
 
   async function requestWakeLock() {
     if (!('wakeLock' in navigator)) {
@@ -477,10 +633,18 @@
     els.audioToggle.disabled = true;
   });
 
+  els.compassToggle.addEventListener('click', async () => {
+    await startCompass();
+    if (compassActive) {
+      els.compassToggle.textContent = 'Richtingssensor actief';
+      els.compassToggle.disabled = true;
+    }
+  });
+
   // --- GPS ---
   function startGPS() {
     if (!navigator.geolocation) {
-      alert('Geolocation wordt niet ondersteund door deze browser.');
+      safeAlert('Geolocation wordt niet ondersteund door deze browser.');
       return;
     }
     els.gpsStatus.textContent = 'zoeken…';
@@ -528,6 +692,7 @@
     zones.forEach(z => {
       const dist = haversine(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
       const gain = gainForDistance(dist, z.radius);
+      z.bearingFromUser = bearing(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
       setZoneGain(z.id, gain);
       updateZoneUI(z, dist, gain);
     });
@@ -607,7 +772,8 @@
 
   function clearAllZones() {
     if (zones.length === 0) return;
-    if (!confirm('Alle zones verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
+    const confirmed = safeConfirm('Alle zones verwijderen? Dit kan niet ongedaan worden gemaakt.');
+    if (!confirmed) return;
     zones.slice().forEach(z => removeZone(z.id));
     localStorage.removeItem(STORAGE_KEY);
   }
@@ -618,8 +784,8 @@
     const lon = parseFloat(els.zoneLon.value);
     const radius = parseFloat(els.zoneRadius.value) || 25;
 
-    if (!name) { alert('Geef de zone een naam.'); return; }
-    if (isNaN(lat) || isNaN(lon)) { alert('Vul geldige lat/lon waarden in, of gebruik "Gebruik huidige locatie".'); return; }
+    if (!name) { safeAlert('Geef de zone een naam.'); return; }
+    if (isNaN(lat) || isNaN(lon)) { safeAlert('Vul geldige lat/lon waarden in, of gebruik "Gebruik huidige locatie".'); return; }
 
     const zone = { id: nextZoneId++, name, lat, lon, radius, index: zones.length };
     zones.push(zone);
@@ -641,12 +807,10 @@
     if (idx === -1) return;
     const node = zoneAudioNodes[id];
     if (node) {
-      [node.osc, node.overtoneOsc, node.lfo, node.lfoOffset].forEach(n => {
-        if (!n) return;
-        try { n.stop(); } catch(e) {}
-        try { n.disconnect(); } catch(e) {}
-      });
+      if (node.timerId) clearInterval(node.timerId);
+      try { if (node.filter) node.filter.disconnect(); } catch(e) {}
       try { node.gain.disconnect(); } catch(e) {}
+      try { if (node.panner) node.panner.disconnect(); } catch(e) {}
       delete zoneAudioNodes[id];
     }
     zones.splice(idx, 1);
@@ -659,7 +823,7 @@
 
   els.useCurrentBtn.addEventListener('click', () => {
     if (!currentPos) {
-      alert('Start eerst GPS en wacht tot er een positie binnenkomt.');
+      safeAlert('Start eerst GPS en wacht tot er een positie binnenkomt.');
       return;
     }
     els.zoneLat.value = currentPos.latitude.toFixed(6);
