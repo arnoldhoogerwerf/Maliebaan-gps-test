@@ -715,6 +715,7 @@
         const headroom = activeCount <= 2 ? 0.8 : 0.8 * (2 / activeCount);
         masterGain.gain.setTargetAtTime(Math.max(0.35, headroom), audioCtx.currentTime, 0.3);
       }
+      updateCompassNeedles();
       rafId = requestAnimationFrame(tick);
     }
     rafId = requestAnimationFrame(tick);
@@ -723,6 +724,33 @@
   function updateGainMeter(id, value) {
     const fill = document.getElementById('fill-' + id);
     if (fill) fill.style.width = (value * 100).toFixed(0) + '%';
+  }
+
+  // Kompasnaald per zone wordt bijgewerkt in de rAF-loop (niet alleen bij GPS-updates),
+  // zodat hij ook reageert als jij draait zonder dat er een nieuwe GPS-positie binnenkomt.
+  function updateCompassNeedles() {
+    zones.forEach(z => {
+      if (typeof z.bearingFromUser !== 'number') return;
+      const needle = document.getElementById('compass-needle-' + z.id);
+      const elevLabel = document.getElementById('compass-elev-' + z.id);
+      const compass = document.getElementById('compass-' + z.id);
+      if (needle) {
+        // Naald wijst altijd naar de absolute richting van de bron (t.o.v. noorden),
+        // maar gecorrigeerd voor jouw kijkrichting zodat "recht omhoog in het kompasje"
+        // betekent: "recht voor je".
+        const relDeg = smoothedHeading !== null
+          ? z.bearingFromUser - smoothedHeading
+          : z.bearingFromUser;
+        needle.setAttribute('transform', `rotate(${relDeg.toFixed(1)})`);
+      }
+      if (elevLabel && z.lastDistance != null) {
+        const hDist = Math.max(z.lastDistance, 1);
+        const elevDeg = Math.atan2(z.height || 0, hDist) * 180 / Math.PI;
+        elevLabel.textContent = (elevDeg >= 0 ? '+' : '') + Math.round(elevDeg) + '°';
+      }
+      const node = zoneAudioNodes[z.id];
+      if (compass) compass.style.opacity = (node && node.currentValue > 0.01) ? '1' : '0.35';
+    });
   }
 
   let wakeLock = null;
@@ -861,9 +889,6 @@
   function updateZoneUI(zone, dist, gain) {
     const meta = document.getElementById('meta-' + zone.id);
     const pill = document.getElementById('pill-' + zone.id);
-    const compass = document.getElementById('compass-' + zone.id);
-    const needle = document.getElementById('compass-needle-' + zone.id);
-    const elevLabel = document.getElementById('compass-elev-' + zone.id);
 
     if (meta) {
       meta.textContent = dist === null
@@ -878,22 +903,6 @@
         pill.textContent = 'stil';
         pill.classList.add('off');
       }
-    }
-
-    // Mini-kompasje: draai de naald naar de richting van de bron (t.o.v. het noorden),
-    // los van de kompas-heading — zo zie je altijd naar welke kant de bron ligt,
-    // ongeacht waar jij op dat moment naar kijkt. Maak het kompasje zichtbaarder
-    // zodra de zone hoorbaar is.
-    if (needle && typeof zone.bearingFromUser === 'number') {
-      needle.setAttribute('transform', `rotate(${zone.bearingFromUser.toFixed(1)})`);
-      if (compass) compass.style.opacity = gain > 0 ? '1' : '0.35';
-    }
-
-    // Elevatie-label: toon de hoek omhoog (+ is boven, 0 is horizon)
-    if (elevLabel && dist !== null) {
-      const hDist = Math.max(dist, 1);
-      const elevDeg = Math.atan2(zone.height || 0, hDist) * 180 / Math.PI;
-      elevLabel.textContent = (elevDeg >= 0 ? '+' : '') + Math.round(elevDeg) + '°';
     }
   }
 
