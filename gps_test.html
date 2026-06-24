@@ -728,19 +728,38 @@
 
   // Kompasnaald per zone wordt bijgewerkt in de rAF-loop (niet alleen bij GPS-updates),
   // zodat hij ook reageert als jij draait zonder dat er een nieuwe GPS-positie binnenkomt.
+  // Aparte uiHeading met iets meer demping dan smoothedHeading (die puur voor audio is):
+  // de naald ververst 60x/sec, waardoor zelfs sub-graadruis als jitter zichtbaar wordt
+  // als we de ruwe audio-heading gebruiken. uiHeading volgt trager maar stabiel.
+  let uiHeading = null;
+
   function updateCompassNeedles() {
+    // UI-heading: zelfde outlier-filter als smoothedHeading, maar hogere demping
+    // zodat de visuele naald stabiel is zonder te "slepen".
+    if (smoothedHeading !== null) {
+      if (uiHeading === null) {
+        uiHeading = smoothedHeading;
+      } else {
+        const delta = shortestAngleDelta(uiHeading, smoothedHeading);
+        uiHeading = (uiHeading + delta * 0.15 + 360) % 360;
+      }
+    }
+
     zones.forEach(z => {
-      if (typeof z.bearingFromUser !== 'number') return;
       const needle = document.getElementById('compass-needle-' + z.id);
       const elevLabel = document.getElementById('compass-elev-' + z.id);
       const compass = document.getElementById('compass-' + z.id);
-      if (needle) {
-        // Naald wijst altijd naar de absolute richting van de bron (t.o.v. noorden),
-        // maar gecorrigeerd voor jouw kijkrichting zodat "recht omhoog in het kompasje"
-        // betekent: "recht voor je".
-        const relDeg = smoothedHeading !== null
-          ? z.bearingFromUser - smoothedHeading
-          : z.bearingFromUser;
+
+      // Bearing live herberekenen vanuit huidige positie zodat de naald niet
+      // wegdrijft tussen GPS-updates wanneer je tegelijk loopt én draait.
+      let bearingDeg = z.bearingFromUser;
+      if (currentPos && typeof z.lat === 'number') {
+        bearingDeg = bearing(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
+      }
+      if (typeof bearingDeg !== 'number') return;
+
+      if (needle && uiHeading !== null) {
+        const relDeg = bearingDeg - uiHeading;
         needle.setAttribute('transform', `rotate(${relDeg.toFixed(1)})`);
       }
       if (elevLabel && z.lastDistance != null) {
