@@ -890,9 +890,12 @@
     if (!currentPos) return;
     zones.forEach(z => {
       const dist = haversine(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
-      const gain = gainForDistance(dist, z.radius);
+      // 3D-afstand: schuine afstand incl. hoogte. Een vleermuis op 15m hoogte en
+      // 10m horizontaal is ~18m van je af, niet 10m — gain moet dat reflecteren.
+      const dist3d = Math.sqrt(dist * dist + (z.height || 0) * (z.height || 0));
+      const gain = gainForDistance(dist3d, z.radius);
       z.bearingFromUser = bearing(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
-      z.lastDistance = dist; // bewaard voor elevatie-berekening in de interpolatie-loop
+      z.lastDistance = dist; // horizontale afstand bewaard voor elevatie-berekening
       const proximity = Math.min(1, dist / z.radius); // 0 = op het punt zelf, 1 = op de rand
       // Lowpass-cutoff: simuleert luchtabsorptie. Dichtbij (proximity 0) volledig
       // open (8000 Hz), bij de rand (proximity 1) flink gedempt (~900 Hz). Niet
