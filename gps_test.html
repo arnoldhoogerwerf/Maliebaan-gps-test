@@ -364,15 +364,28 @@
 
   let hasCenteredOnFirstFix = false;
 
+  function createPositionIcon() {
+    return L.divIcon({
+      className: 'position-marker-icon',
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+      html: `
+        <svg width="28" height="28" viewBox="-14 -14 28 28">
+          <circle r="11" fill="#4a9eff" fill-opacity="0.25" stroke="none"/>
+          <g id="position-arrow" transform="rotate(0)">
+            <path d="M 0,-10 L 6,7 L 0,3 L -6,7 Z" fill="#2a7fd9" stroke="#ffffff" stroke-width="1"/>
+          </g>
+        </svg>
+      `
+    });
+  }
+
   function updatePositionMarker(lat, lon) {
     if (!map) return;
     if (!positionMarker) {
-      positionMarker = L.circleMarker([lat, lon], {
-        radius: 8,
-        color: '#2a7fd9',
-        weight: 2,
-        fillColor: '#4a9eff',
-        fillOpacity: 0.9
+      positionMarker = L.marker([lat, lon], {
+        icon: createPositionIcon(),
+        zIndexOffset: 1000
       }).addTo(map);
     } else {
       positionMarker.setLatLng([lat, lon]);
@@ -383,6 +396,16 @@
       map.setView([lat, lon], 18);
       hasCenteredOnFirstFix = true;
     }
+  }
+
+  // Draait de richtingspijl van de positie-marker mee met dezelfde, al-gefilterde
+  // uiHeading die ook de zone-kompasjes aanstuurt — zelfde bron, dus consistent.
+  function updatePositionMarkerHeading() {
+    if (!positionMarker || uiHeading === null) return;
+    const el = positionMarker.getElement();
+    if (!el) return;
+    const arrow = el.querySelector('#position-arrow');
+    if (arrow) arrow.setAttribute('transform', `rotate(${uiHeading.toFixed(1)})`);
   }
 
   const els = {
@@ -835,6 +858,7 @@
         uiHeading = (uiHeading + delta * 0.15 + 360) % 360;
       }
     }
+    updatePositionMarkerHeading();
 
     zones.forEach(z => {
       const needle = document.getElementById('compass-needle-' + z.id);
