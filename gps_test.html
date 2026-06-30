@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>GPS Crossfade Test — Aldus spreekt De Maliebaan</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <style>
   :root {
     --bg: #0e1410;
@@ -198,6 +202,18 @@
     border: 1px solid var(--accent-dim);
     padding: 6px 10px;
   }
+  #map {
+    height: 280px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    margin-top: 4px;
+  }
+  /* Leaflet rendert eigen donkere/lichte tegels niet automatisch mee met ons thema;
+     een lichte filter zorgt dat de kaart prettig oogt in beide standen. */
+  @media (prefers-color-scheme: dark) {
+    #map { filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9); }
+    #map .leaflet-marker-icon, #map .leaflet-popup { filter: invert(1) hue-rotate(180deg); }
+  }
 </style>
 </head>
 <body>
@@ -205,6 +221,12 @@
 <h1>GPS Crossfade Test</h1>
 <div class="sub">
   Voer 2–3 zones in bij jou in de buurt, start GPS, en loop rond om te testen of de audio-gain correct in- en uitfadet op basis van afstand. Elke zone krijgt een eigen gegenereerde testtoon zodat je ze uit elkaar kunt horen.
+</div>
+
+<div class="panel">
+  <h2>Kaart</h2>
+  <div id="map"></div>
+  <div class="sub" style="margin:8px 0 0 0;">Blauwe stip: jouw live GPS-positie. Cirkels: zones, met straal op ware grootte (in meters).</div>
 </div>
 
 <div class="panel">
@@ -293,6 +315,69 @@
   let audioCtx = null;
   const zoneAudioNodes = {}; // id -> { osc, gain }
   let nextZoneId = 1;
+
+  // --- Leaflet kaart ---
+  let map = null;
+  let positionMarker = null;
+  const zoneCircles = {}; // id -> L.Circle
+  const zoneLines = {};   // id -> L.Polyline (alleen aanwezig zolang de zone hoorbaar is)
+
+  function initMap() {
+    if (map) return;
+    // Startcentrum: Utrecht/Maliebaan-omgeving als redelijke default totdat GPS binnenkomt
+    map = L.map('map', { zoomControl: true, attributionControl: true })
+      .setView([52.0907, 5.1214], 16);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    // Voorkomt grijze/halve tegels: Leaflet meet de containergrootte bij init,
+    // wat soms misgaat als de layout op dat moment nog niet volledig stabiel is.
+    setTimeout(() => map.invalidateSize(), 100);
+
+    // Direct alle al-bestaande (uit localStorage geladen) zones tekenen
+    zones.forEach(drawZoneCircle);
+  }
+
+  function drawZoneCircle(zone) {
+    if (!map) return;
+    const circle = L.circle([zone.lat, zone.lon], {
+      radius: zone.radius,
+      color: '#1f8a4c',
+      weight: 2,
+      fillColor: '#1f8a4c',
+      fillOpacity: 0.15
+    }).addTo(map).bindPopup(zone.name);
+    zoneCircles[zone.id] = circle;
+  }
+
+  function removeZoneCircle(id) {
+    if (zoneCircles[id]) {
+      map.removeLayer(zoneCircles[id]);
+      delete zoneCircles[id];
+    }
+    if (zoneLines[id]) {
+      map.removeLayer(zoneLines[id]);
+      delete zoneLines[id];
+    }
+  }
+
+  function updatePositionMarker(lat, lon) {
+    if (!map) return;
+    if (!positionMarker) {
+      positionMarker = L.circleMarker([lat, lon], {
+        radius: 8,
+        color: '#2a7fd9',
+        weight: 2,
+        fillColor: '#4a9eff',
+        fillOpacity: 0.9
+      }).addTo(map);
+      map.setView([lat, lon], 17);
+    } else {
+      positionMarker.setLatLng([lat, lon]);
+    }
+  }
 
   const els = {
     gpsStatus: document.getElementById('gpsStatus'),
@@ -768,7 +853,39 @@
         elevLabel.textContent = (elevDeg >= 0 ? '+' : '') + Math.round(elevDeg) + '°';
       }
       const node = zoneAudioNodes[z.id];
-      if (compass) compass.style.opacity = (node && node.currentValue > 0.01) ? '1' : '0.35';
+      const gainNow = node ? node.currentValue : 0;
+      if (compass) compass.style.opacity = (gainNow > 0.01) ? '1' : '0.35';
+
+      // Verbindingslijn op de kaart tussen luisteraar en zone, alleen zolang
+      // de zone daadwerkelijk hoorbaar is. Kleur/dikte/opacity schalen mee met
+      // de actuele gain, zodat een net-hoorbare zone subtieler oogt dan een
+      // zone waar je vlak bovenop staat.
+      if (map && currentPos) {
+        if (gainNow > 0.01) {
+          const latlngs = [
+            [currentPos.latitude, currentPos.longitude],
+            [z.lat, z.lon]
+          ];
+          if (!zoneLines[z.id]) {
+            zoneLines[z.id] = L.polyline(latlngs, {
+              color: '#7fd99a',
+              weight: 1 + gainNow * 2.5,
+              opacity: 0.25 + gainNow * 0.6,
+              dashArray: '4, 6'
+            }).addTo(map);
+          } else {
+            zoneLines[z.id].setLatLngs(latlngs);
+            zoneLines[z.id].setStyle({
+              weight: 1 + gainNow * 2.5,
+              opacity: 0.25 + gainNow * 0.6
+            });
+          }
+        } else if (zoneLines[z.id]) {
+          // Zone niet meer hoorbaar: lijn weghalen i.p.v. 'm op 0 opacity laten hangen
+          map.removeLayer(zoneLines[z.id]);
+          delete zoneLines[z.id];
+        }
+      }
     });
   }
 
@@ -874,6 +991,7 @@
     els.accValue.textContent = Math.round(pos.coords.accuracy) + ' m';
     els.latValue.textContent = pos.coords.latitude.toFixed(6);
     els.lonValue.textContent = pos.coords.longitude.toFixed(6);
+    updatePositionMarker(pos.coords.latitude, pos.coords.longitude);
     updateAllZones();
   }
 
@@ -1012,6 +1130,7 @@
     zones.push(zone);
     renderZoneList();
     saveZonesToStorage();
+    drawZoneCircle(zone);
 
     if (audioCtx) createZoneAudio(zone);
 
@@ -1039,6 +1158,7 @@
     zones.splice(idx, 1);
     renderZoneList();
     saveZonesToStorage();
+    removeZoneCircle(id);
   }
 
   els.addZoneBtn.addEventListener('click', addZone);
@@ -1055,6 +1175,7 @@
 
   loadZonesFromStorage();
   renderZoneList();
+  initMap();
 })();
 </script>
 
