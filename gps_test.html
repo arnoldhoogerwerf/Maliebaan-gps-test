@@ -434,8 +434,25 @@
 
   // Draait de richtingspijl van de positie-marker mee met dezelfde, al-gefilterde
   // uiHeading die ook de zone-kompasjes aanstuurt — zelfde bron, dus consistent.
+  // Doorlopende (niet-gewikkelde) rotatiehoek voor de kaart-CSS-transform: door
+  // steeds de kortste hoekafstand bij de vorige waarde op te tellen i.p.v. de
+  // absolute 0-360 hoek te gebruiken, "telt" de rotatie door (bv. 358° → 361°)
+  // in plaats van terug te springen (358° → 1°), wat anders een volledige
+  // ongewenste 360°-zwaai veroorzaakt bij elke noord-overgang.
+  let mapRotationContinuous = 0;
+  let mapRotationInitialized = false;
+
   function updatePositionMarkerHeading() {
     if (uiHeading === null) return;
+
+    const targetRotation = -uiHeading; // kaart draait tegengesteld aan de kijkrichting
+    if (!mapRotationInitialized) {
+      mapRotationContinuous = targetRotation;
+      mapRotationInitialized = true;
+    } else {
+      const delta = shortestAngleDelta(((mapRotationContinuous % 360) + 360) % 360, ((targetRotation % 360) + 360) % 360);
+      mapRotationContinuous += delta;
+    }
 
     // Kaart-zelf roteren tegen je kijkrichting in, zodat "boven in de kaart"
     // altijd overeenkomt met "recht voor je" — net als bij navigatie-apps.
@@ -447,7 +464,7 @@
     // is dat de oorzaak.
     const mapEl = document.getElementById('map');
     if (mapEl) {
-      mapEl.style.transform = `translate(-50%, -50%) rotate(${(-uiHeading).toFixed(1)}deg)`;
+      mapEl.style.transform = `translate(-50%, -50%) rotate(${mapRotationContinuous.toFixed(1)}deg)`;
     }
     // Alleen het pijltje binnen de noordindicator laat meedraaien met de
     // kaartrotatie, zodat het altijd naar het werkelijke noorden blijft wijzen;
@@ -460,11 +477,18 @@
     if (!positionMarker) return;
     const el = positionMarker.getElement();
     if (!el) return;
-    const arrow = el.querySelector('#position-arrow');
-    // Omdat de kaart zelf al geroteerd is om je kijkrichting recht omhoog te
-    // laten wijzen, hoeft de pijl zelf niet meer te draaien — anders telt de
-    // rotatie dubbel. De pijl wijst nu vast "recht vooruit" binnen de kaart.
-    if (arrow) arrow.setAttribute('transform', 'rotate(0)');
+    // BELANGRIJK: de marker zit zelf óók binnen #map, en draait dus automatisch
+    // mee met de kaartrotatie (een kind-element kan zich niet onttrekken aan de
+    // transform van zijn ouder). Leaflet zet zijn eigen positionerings-transform
+    // (translate3d) op het BUITENSTE marker-element (el zelf) — dat raken we
+    // niet aan. In plaats daarvan roteren we alleen het SVG-element ERIN tegen
+    // de kaartrotatie in, zodat de pijl wereldwijd vast/rechtop blijft staan
+    // terwijl Leaflet's eigen positionering ongemoeid blijft.
+    const svg = el.querySelector('svg');
+    if (svg) {
+      svg.style.transform = `rotate(${(-mapRotationContinuous).toFixed(1)}deg)`;
+      svg.style.transformOrigin = 'center center';
+    }
   }
 
   const els = {
