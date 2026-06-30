@@ -202,27 +202,57 @@
     border: 1px solid var(--accent-dim);
     padding: 6px 10px;
   }
-  #map {
+  #map-outer {
     height: 280px;
     border-radius: 10px;
     border: 1px solid var(--line);
     margin-top: 4px;
+    overflow: hidden; /* voorkomt dat de roterende binnenkaart buiten de ronde hoeken uitsteekt */
+    position: relative;
   }
-  /* Leaflet rendert eigen donkere/lichte tegels niet automatisch mee met ons thema;
-     een lichte filter zorgt dat de kaart prettig oogt in beide standen. */
+  #map {
+    /* Groter dan de zichtbare container, zodat er bij rotatie geen lege hoeken
+       ontstaan (de hoeken van een roterend vierkant steken anders buiten een
+       vaste rechthoekige kijkopening uit). */
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 141%;  /* ≈ √2 × 100%, dekt de diagonaal bij elke rotatiehoek */
+    height: 141%;
+    transform: translate(-50%, -50%) rotate(0deg);
+    transform-origin: center center;
+    transition: transform 0.1s linear;
+  }
+  #map-north-indicator {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 1000;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 3px 7px;
+    font-size: 11px;
+    color: var(--muted);
+    pointer-events: none;
+  }
   /* CartoDB Positron is van zichzelf al licht/minimalistisch; geen kleurinversie nodig. */
 </style>
 </head>
 <body>
 
 <h1>GPS Crossfade Test</h1>
+
 <div class="sub">
   Voer 2–3 zones in bij jou in de buurt, start GPS, en loop rond om te testen of de audio-gain correct in- en uitfadet op basis van afstand. Elke zone krijgt een eigen gegenereerde testtoon zodat je ze uit elkaar kunt horen.
 </div>
 
 <div class="panel">
   <h2>Kaart</h2>
-  <div id="map"></div>
+  <div id="map-outer">
+    <div id="map"></div>
+    <div id="map-north-indicator">N <span id="map-north-arrow" style="display:inline-block;">↑</span></div>
+  </div>
   <div class="sub" style="margin:8px 0 0 0;">Blauwe pijl: jouw positie en kijkrichting. Groene stip: positie van een geluid (groeit naarmate hoorbaarder).</div>
 </div>
 
@@ -405,11 +435,36 @@
   // Draait de richtingspijl van de positie-marker mee met dezelfde, al-gefilterde
   // uiHeading die ook de zone-kompasjes aanstuurt — zelfde bron, dus consistent.
   function updatePositionMarkerHeading() {
-    if (!positionMarker || uiHeading === null) return;
+    if (uiHeading === null) return;
+
+    // Kaart-zelf roteren tegen je kijkrichting in, zodat "boven in de kaart"
+    // altijd overeenkomt met "recht voor je" — net als bij navigatie-apps.
+    // LET OP: dit is een pure CSS-truc (transform: rotate op de hele kaart-div).
+    // Leaflet zelf "weet" niet dat de kaart visueel gedraaid is — interne
+    // coördinatenberekening (bv. voor klikken/tikken op de kaart) blijft uitgaan
+    // van de ongeroteerde stand. Voor kijken/testen is dat geen probleem; mocht
+    // interactie (tikken op een zone-stip) onnauwkeurig aanvoelen na rotatie,
+    // is dat de oorzaak.
+    const mapEl = document.getElementById('map');
+    if (mapEl) {
+      mapEl.style.transform = `translate(-50%, -50%) rotate(${(-uiHeading).toFixed(1)}deg)`;
+    }
+    // Alleen het pijltje binnen de noordindicator laat meedraaien met de
+    // kaartrotatie, zodat het altijd naar het werkelijke noorden blijft wijzen;
+    // het "N"-label zelf blijft rechtop en leesbaar.
+    const northArrow = document.getElementById('map-north-arrow');
+    if (northArrow) {
+      northArrow.style.transform = `rotate(${(-uiHeading).toFixed(1)}deg)`;
+    }
+
+    if (!positionMarker) return;
     const el = positionMarker.getElement();
     if (!el) return;
     const arrow = el.querySelector('#position-arrow');
-    if (arrow) arrow.setAttribute('transform', `rotate(${uiHeading.toFixed(1)})`);
+    // Omdat de kaart zelf al geroteerd is om je kijkrichting recht omhoog te
+    // laten wijzen, hoeft de pijl zelf niet meer te draaien — anders telt de
+    // rotatie dubbel. De pijl wijst nu vast "recht vooruit" binnen de kaart.
+    if (arrow) arrow.setAttribute('transform', 'rotate(0)');
   }
 
   const els = {
