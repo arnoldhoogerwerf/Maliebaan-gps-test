@@ -223,7 +223,7 @@
 <div class="panel">
   <h2>Kaart</h2>
   <div id="map"></div>
-  <div class="sub" style="margin:8px 0 0 0;">Blauwe stip: jouw live GPS-positie. Cirkels: zones, met straal op ware grootte (in meters).</div>
+  <div class="sub" style="margin:8px 0 0 0;">Blauwe pijl: jouw positie en kijkrichting. Groene stip: kernpunt van een geluid (groeit naarmate hoorbaarder). Ringen: afstralingsgebied, met straal op ware grootte (in meters).</div>
 </div>
 
 <div class="panel">
@@ -341,19 +341,43 @@
 
   function drawZoneCircle(zone) {
     if (!map) return;
-    const circle = L.circle([zone.lat, zone.lon], {
-      radius: zone.radius,
+
+    // Kernpunt: klein, vast (schaalt niet mee met zoom), exact op de coördinaat —
+    // de "bron" van het geluid, los van hoe ver het draagt.
+    const point = L.circleMarker([zone.lat, zone.lon], {
+      radius: 5,
       color: '#1f8a4c',
       weight: 2,
       fillColor: '#1f8a4c',
-      fillOpacity: 0.15
+      fillOpacity: 1,
+      interactive: true
     }).addTo(map).bindPopup(zone.name);
-    zoneCircles[zone.id] = circle;
+
+    // Afstralingsgebied: meerdere concentrische ringen met afnemende opacity,
+    // benadert een geleidelijke uitdoving in plaats van een harde randcirkel.
+    // Niet interactief, zodat alleen het kernpunt klikbaar is (geen dubbele popups).
+    const ringFractions = [1.0, 0.7, 0.4];
+    const ringOpacities = [0.06, 0.10, 0.16];
+    const rings = ringFractions.map((frac, i) => {
+      return L.circle([zone.lat, zone.lon], {
+        radius: zone.radius * frac,
+        stroke: i === 0, // alleen de buitenste ring krijgt een rand, als bereik-grens
+        color: '#1f8a4c',
+        weight: 1,
+        opacity: 0.25,
+        fillColor: '#1f8a4c',
+        fillOpacity: ringOpacities[i],
+        interactive: false
+      }).addTo(map);
+    });
+
+    zoneCircles[zone.id] = { point, rings };
   }
 
   function removeZoneCircle(id) {
     if (zoneCircles[id]) {
-      map.removeLayer(zoneCircles[id]);
+      map.removeLayer(zoneCircles[id].point);
+      zoneCircles[id].rings.forEach(ring => map.removeLayer(ring));
       delete zoneCircles[id];
     }
     if (zoneLines[id]) {
@@ -885,6 +909,15 @@
       const node = zoneAudioNodes[z.id];
       const gainNow = node ? node.currentValue : 0;
       if (compass) compass.style.opacity = (gainNow > 0.01) ? '1' : '0.35';
+
+      // Kernpunt op de kaart laten meeademen met de actuele gain: groter en
+      // feller naarmate je dichter bij het hart van de zone staat.
+      if (zoneCircles[z.id]) {
+        zoneCircles[z.id].point.setRadius(5 + gainNow * 4);
+        zoneCircles[z.id].point.setStyle({
+          fillOpacity: 0.6 + gainNow * 0.4
+        });
+      }
 
       // Verbindingslijn op de kaart tussen luisteraar en zone, alleen zolang
       // de zone daadwerkelijk hoorbaar is. Kleur/dikte/opacity schalen mee met
