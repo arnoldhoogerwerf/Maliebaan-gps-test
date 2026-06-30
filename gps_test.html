@@ -8,6 +8,10 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<!-- leaflet-rotate: voegt echte kaartrotatie toe (incl. correcte interactie/zoom/pan
+     tijdens rotatie), in plaats van de eerdere CSS-transform-hack. Overschrijft delen
+     van Leaflet's kern, dus moet na de Leaflet-coreload geladen worden. -->
+<script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
 <style>
   :root {
     --bg: #0e1410;
@@ -207,21 +211,12 @@
     border-radius: 10px;
     border: 1px solid var(--line);
     margin-top: 4px;
-    overflow: hidden; /* voorkomt dat de roterende binnenkaart buiten de ronde hoeken uitsteekt */
+    overflow: hidden;
     position: relative;
   }
   #map {
-    /* Groter dan de zichtbare container, zodat er bij rotatie geen lege hoeken
-       ontstaan (de hoeken van een roterend vierkant steken anders buiten een
-       vaste rechthoekige kijkopening uit). */
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 141%;  /* ≈ √2 × 100%, dekt de diagonaal bij elke rotatiehoek */
-    height: 141%;
-    transform: translate(-50%, -50%) rotate(0deg);
-    transform-origin: center center;
-    transition: transform 0.1s linear;
+    width: 100%;
+    height: 100%;
   }
   #map-north-indicator {
     position: absolute;
@@ -351,9 +346,21 @@
 
   function initMap() {
     if (map) return;
-    // Startcentrum: Utrecht/Maliebaan-omgeving als redelijke default totdat GPS binnenkomt
-    map = L.map('map', { zoomControl: true, attributionControl: true })
-      .setView([52.0907, 5.1214], 16);
+    // rotate: true activeert leaflet-rotate, mits de plugin geladen is. Als de
+    // CDN-load om wat voor reden dan ook faalt, valt dit terug op gewone,
+    // niet-roterende Leaflet — beter een werkende kaart zonder rotatie dan
+    // een gecrashte pagina.
+    const rotateAvailable = typeof L.Map.prototype.setBearing === 'function';
+    if (!rotateAvailable) {
+      console.warn('leaflet-rotate niet geladen; kaart werkt zonder rotatiefunctionaliteit.');
+    }
+    map = L.map('map', {
+      zoomControl: true,
+      attributionControl: true,
+      rotate: rotateAvailable,
+      rotateControl: false,
+      bearing: 0
+    }).setView([52.0907, 5.1214], 16);
     // CartoDB Positron: minimalistische, lichte stijl, bedoeld als rustige basis
     // voor data-overlays (geen drukke kleuren die met de zone-cirkels/lijnen concurreren).
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
@@ -432,63 +439,29 @@
     }
   }
 
-  // Draait de richtingspijl van de positie-marker mee met dezelfde, al-gefilterde
-  // uiHeading die ook de zone-kompasjes aanstuurt — zelfde bron, dus consistent.
-  // Doorlopende (niet-gewikkelde) rotatiehoek voor de kaart-CSS-transform: door
-  // steeds de kortste hoekafstand bij de vorige waarde op te tellen i.p.v. de
-  // absolute 0-360 hoek te gebruiken, "telt" de rotatie door (bv. 358° → 361°)
-  // in plaats van terug te springen (358° → 1°), wat anders een volledige
-  // ongewenste 360°-zwaai veroorzaakt bij elke noord-overgang.
-  let mapRotationContinuous = 0;
-  let mapRotationInitialized = false;
-
+  // Draait de kaart mee met dezelfde, al-gefilterde uiHeading die ook de
+  // zone-kompasjes aanstuurt — zelfde bron, dus consistent. leaflet-rotate's
+  // eigen setBearing() regelt intern de hoek-wikkeling correct (geen handmatige
+  // "doorlopende hoek"-tracking meer nodig zoals bij de eerdere CSS-aanpak) en
+  // houdt zoom/pan/interactie correct werkend tijdens rotatie.
   function updatePositionMarkerHeading() {
-    if (uiHeading === null) return;
+    if (uiHeading === null || !map || typeof map.setBearing !== 'function') return;
 
-    const targetRotation = -uiHeading; // kaart draait tegengesteld aan de kijkrichting
-    if (!mapRotationInitialized) {
-      mapRotationContinuous = targetRotation;
-      mapRotationInitialized = true;
-    } else {
-      const delta = shortestAngleDelta(((mapRotationContinuous % 360) + 360) % 360, ((targetRotation % 360) + 360) % 360);
-      mapRotationContinuous += delta;
-    }
+    // Kaart roteert tegengesteld aan de kijkrichting, zodat "boven in de kaart"
+    // altijd "recht voor je" betekent — net als bij navigatie-apps.
+    map.setBearing(-uiHeading);
 
-    // Kaart-zelf roteren tegen je kijkrichting in, zodat "boven in de kaart"
-    // altijd overeenkomt met "recht voor je" — net als bij navigatie-apps.
-    // LET OP: dit is een pure CSS-truc (transform: rotate op de hele kaart-div).
-    // Leaflet zelf "weet" niet dat de kaart visueel gedraaid is — interne
-    // coördinatenberekening (bv. voor klikken/tikken op de kaart) blijft uitgaan
-    // van de ongeroteerde stand. Voor kijken/testen is dat geen probleem; mocht
-    // interactie (tikken op een zone-stip) onnauwkeurig aanvoelen na rotatie,
-    // is dat de oorzaak.
-    const mapEl = document.getElementById('map');
-    if (mapEl) {
-      mapEl.style.transform = `translate(-50%, -50%) rotate(${mapRotationContinuous.toFixed(1)}deg)`;
-    }
-    // Alleen het pijltje binnen de noordindicator laat meedraaien met de
-    // kaartrotatie, zodat het altijd naar het werkelijke noorden blijft wijzen;
-    // het "N"-label zelf blijft rechtop en leesbaar.
+    // Noordindicator-pijltje tegengesteld meedraaien zodat het altijd naar het
+    // werkelijke noorden blijft wijzen, ondanks de geroteerde kaart eronder.
     const northArrow = document.getElementById('map-north-arrow');
     if (northArrow) {
       northArrow.style.transform = `rotate(${(-uiHeading).toFixed(1)}deg)`;
     }
 
-    if (!positionMarker) return;
-    const el = positionMarker.getElement();
-    if (!el) return;
-    // BELANGRIJK: de marker zit zelf óók binnen #map, en draait dus automatisch
-    // mee met de kaartrotatie (een kind-element kan zich niet onttrekken aan de
-    // transform van zijn ouder). Leaflet zet zijn eigen positionerings-transform
-    // (translate3d) op het BUITENSTE marker-element (el zelf) — dat raken we
-    // niet aan. In plaats daarvan roteren we alleen het SVG-element ERIN tegen
-    // de kaartrotatie in, zodat de pijl wereldwijd vast/rechtop blijft staan
-    // terwijl Leaflet's eigen positionering ongemoeid blijft.
-    const svg = el.querySelector('svg');
-    if (svg) {
-      svg.style.transform = `rotate(${(-mapRotationContinuous).toFixed(1)}deg)`;
-      svg.style.transformOrigin = 'center center';
-    }
+    // Positie-marker: leaflet-rotate houdt L.divIcon-markers standaard rechtop
+    // (ze draaien niet automatisch mee met de kaartrotatie), dus de pijl blijft
+    // vanzelf het vaste, wereldwijd-stilstaande referentiepunt — geen extra
+    // tegen-rotatie-code meer nodig zoals bij de eerdere CSS-aanpak.
   }
 
   const els = {
