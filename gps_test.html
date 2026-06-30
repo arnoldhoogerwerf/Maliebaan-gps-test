@@ -210,10 +210,7 @@
   }
   /* Leaflet rendert eigen donkere/lichte tegels niet automatisch mee met ons thema;
      een lichte filter zorgt dat de kaart prettig oogt in beide standen. */
-  @media (prefers-color-scheme: dark) {
-    #map { filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9); }
-    #map .leaflet-marker-icon, #map .leaflet-popup { filter: invert(1) hue-rotate(180deg); }
-  }
+  /* CartoDB Positron is van zichzelf al licht/minimalistisch; geen kleurinversie nodig. */
 </style>
 </head>
 <body>
@@ -327,9 +324,11 @@
     // Startcentrum: Utrecht/Maliebaan-omgeving als redelijke default totdat GPS binnenkomt
     map = L.map('map', { zoomControl: true, attributionControl: true })
       .setView([52.0907, 5.1214], 16);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    // CartoDB Positron: minimalistische, lichte stijl, bedoeld als rustige basis
+    // voor data-overlays (geen drukke kleuren die met de zone-cirkels/lijnen concurreren).
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
       maxZoom: 19,
-      attribution: '© OpenStreetMap'
+      attribution: '© OpenStreetMap, © CARTO'
     }).addTo(map);
 
     // Voorkomt grijze/halve tegels: Leaflet meet de containergrootte bij init,
@@ -363,6 +362,8 @@
     }
   }
 
+  let hasCenteredOnFirstFix = false;
+
   function updatePositionMarker(lat, lon) {
     if (!map) return;
     if (!positionMarker) {
@@ -373,9 +374,14 @@
         fillColor: '#4a9eff',
         fillOpacity: 0.9
       }).addTo(map);
-      map.setView([lat, lon], 17);
     } else {
       positionMarker.setLatLng([lat, lon]);
+    }
+    // Bij de allereerste GPS-fix: kaart hard centreren op de eigen locatie,
+    // los van de standaard Utrecht-centrumweergave bij initialisatie.
+    if (!hasCenteredOnFirstFix) {
+      map.setView([lat, lon], 18);
+      hasCenteredOnFirstFix = true;
     }
   }
 
