@@ -338,6 +338,7 @@
   const zones = [];
   let watchId = null;
   let currentPos = null;
+  let smoothedPos = null; // exponentieel gewogen gemiddelde over GPS-fixes
   let audioCtx = null;
   const zoneAudioNodes = {}; // id -> { osc, gain }
   let nextZoneId = 1;
@@ -435,11 +436,13 @@
     } else {
       positionMarker.setLatLng([lat, lon]);
     }
-    // Bij de allereerste GPS-fix: kaart hard centreren op de eigen locatie,
-    // los van de standaard Utrecht-centrumweergave bij initialisatie.
+    // Eerste fix: centreer met hogere zoom; daarna: zachte panTo zodat de
+    // positie altijd gecentreerd blijft zonder schokkerige view-resets.
     if (!hasCenteredOnFirstFix) {
       map.setView([lat, lon], 18);
       hasCenteredOnFirstFix = true;
+    } else {
+      map.panTo([lat, lon], { animate: true, duration: 0.5 });
     }
   }
 
@@ -504,15 +507,32 @@
   }
 
   // Oorsprong voor de AudioListener-coördinaten: de eerste GPS-fix wordt (0,0,0).
-  // Alle volgende posities worden uitgedrukt als meters t.o.v. die oorsprong.
-  // Zo kan de PannerNode de echte 3D-afstand berekenen voor zijn inverse-gain.
+  // Oorsprong voor het Audio-coördinatenstelsel: altijd de eerste GPS-fix.
+  // Nooit een zone-coördinaat (zones worden soms vóór de eerste GPS-fix geladen
+  // uit localStorage, wat anders een verkeerde oorsprong zou instellen).
   let listenerOrigin = null;
 
   function latLonToMeters(lat, lon) {
-    if (!listenerOrigin) listenerOrigin = { lat, lon };
+    if (!listenerOrigin) return null; // oorsprong nog onbekend, wacht op GPS-fix
     const dLat = (lat - listenerOrigin.lat) * 111320;
     const dLon = (lon - listenerOrigin.lon) * 111320 * Math.cos(listenerOrigin.lat * Math.PI / 180);
     return { x: dLon, z: -dLat }; // x = oost, z = -noord (Web Audio coördinatenstelsel)
+  }
+
+  function setListenerOrigin(lat, lon) {
+    if (listenerOrigin) return; // alleen de allereerste GPS-fix
+    listenerOrigin = { lat, lon };
+    // Nu de oorsprong bekend is: panner-posities van al-bestaande zones bijwerken
+    // (zones geladen uit localStorage hadden nog geen geldige positie)
+    zones.forEach(z => {
+      const node = zoneAudioNodes[z.id];
+      if (!node || !node.panner) return;
+      const m = latLonToMeters(z.lat, z.lon);
+      if (!m) return;
+      node.panner.positionX.value = m.x;
+      node.panner.positionY.value = z.height || 0;
+      node.panner.positionZ.value = m.z;
+    });
   }
 
   // Peiling (bearing) in graden van punt 1 naar punt 2, 0 = noord, 90 = oost
@@ -764,12 +784,12 @@
     panner.maxDistance = 10000; // geen harde bovengrens: geluid verdwijnt vanzelf in ruis
     panner.rolloffFactor = 1;   // echte inverse-kwadratenwet, geen kunstmatige curve
     // Zone-positie in meters t.o.v. de listener-oorsprong (eerste GPS-fix).
-    // Zones staan stil, dus dit hoeft maar één keer bij aanmaken ingesteld te worden.
-    // De listener-positie beweegt live mee met GPS in updateAllZones().
+    // Als de oorsprong nog niet bekend is (GPS nog niet gestart), tijdelijk op
+    // (0,0,0) plaatsen — setListenerOrigin() corrigeert dit zodra GPS binnenkomt.
     const zoneMeters = latLonToMeters(zone.lat, zone.lon);
-    panner.positionX.value = zoneMeters.x;
+    panner.positionX.value = zoneMeters ? zoneMeters.x : 0;
     panner.positionY.value = zone.height || 0;
-    panner.positionZ.value = zoneMeters.z;
+    panner.positionZ.value = zoneMeters ? zoneMeters.z : 0;
 
     filter.connect(gainNode);
     gainNode.connect(panner);
@@ -924,23 +944,18 @@
       }
       const node = zoneAudioNodes[z.id];
       const gainNow = node ? node.currentValue : 0;
-      if (compass) compass.style.opacity = (gainNow > 0.01) ? '1' : '0.35';
+      const isAudible = gainNow > 0.05; // praktische drempel: onder 5% gain visueel als "stil"
+      if (compass) compass.style.opacity = isAudible ? '1' : '0.35';
 
-      // Kernpunt op de kaart laten meeademen met de actuele gain: groter en
-      // feller naarmate je dichter bij het hart van de zone staat.
       if (zoneCircles[z.id]) {
         zoneCircles[z.id].setRadius(6 + gainNow * 4);
         zoneCircles[z.id].setStyle({
-          fillOpacity: 0.6 + gainNow * 0.4
+          fillOpacity: isAudible ? 0.6 + gainNow * 0.4 : 0.3
         });
       }
 
-      // Verbindingslijn op de kaart tussen luisteraar en zone, alleen zolang
-      // de zone daadwerkelijk hoorbaar is. Kleur/dikte/opacity schalen mee met
-      // de actuele gain, zodat een net-hoorbare zone subtieler oogt dan een
-      // zone waar je vlak bovenop staat.
       if (map && currentPos) {
-        if (gainNow > 0.01) {
+        if (isAudible) {
           const latlngs = [
             [currentPos.latitude, currentPos.longitude],
             [z.lat, z.lon]
@@ -1065,12 +1080,24 @@
   }
 
   function onPosition(pos) {
-    currentPos = pos.coords;
+    const raw = pos.coords;
+    // GPS-smoothing: exponentieel gewogen gemiddelde, vergelijkbaar met kompas-smoothing.
+    // Slechte fixes (lage nauwkeurigheid) wegen minder zwaar mee.
+    const weight = Math.min(0.4, 5 / (raw.accuracy || 10)); // betere accuracy = hogere weight
+    if (!smoothedPos) {
+      smoothedPos = { latitude: raw.latitude, longitude: raw.longitude };
+    } else {
+      smoothedPos.latitude += (raw.latitude - smoothedPos.latitude) * weight;
+      smoothedPos.longitude += (raw.longitude - smoothedPos.longitude) * weight;
+    }
+    currentPos = { ...raw, latitude: smoothedPos.latitude, longitude: smoothedPos.longitude };
+
     els.gpsStatus.textContent = 'actief';
-    els.accValue.textContent = Math.round(pos.coords.accuracy) + ' m';
-    els.latValue.textContent = pos.coords.latitude.toFixed(6);
-    els.lonValue.textContent = pos.coords.longitude.toFixed(6);
-    updatePositionMarker(pos.coords.latitude, pos.coords.longitude);
+    els.accValue.textContent = Math.round(raw.accuracy) + ' m';
+    els.latValue.textContent = currentPos.latitude.toFixed(6);
+    els.lonValue.textContent = currentPos.longitude.toFixed(6);
+    setListenerOrigin(currentPos.latitude, currentPos.longitude);
+    updatePositionMarker(currentPos.latitude, currentPos.longitude);
     updateAllZones();
   }
 
