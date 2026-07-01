@@ -302,7 +302,11 @@
     <input type="number" id="zoneLon" placeholder="Longitude" step="0.000001">
   </div>
   <div class="row">
-    <input type="number" id="zoneRadius" placeholder="Radius (meter, bv. 25)" value="25">
+    <select id="zoneVolume" style="flex:1; background:var(--well); border:1px solid var(--line); color:var(--text); border-radius:8px; padding:10px; font-size:14px;">
+      <option value="soft">Zacht (ritseling, insect) — hoort dichtbij</option>
+      <option value="normal" selected>Normaal (vogelzang, voetstappen)</option>
+      <option value="loud">Luid (merel, verkeer) — draagt ver</option>
+    </select>
     <input type="number" id="zoneHeight" placeholder="Hoogte (meter, bv. 8)" value="0">
   </div>
   <div class="row">
@@ -477,7 +481,7 @@
     zoneName: document.getElementById('zoneName'),
     zoneLat: document.getElementById('zoneLat'),
     zoneLon: document.getElementById('zoneLon'),
-    zoneRadius: document.getElementById('zoneRadius'),
+    zoneVolume: document.getElementById('zoneVolume'),
     zoneHeight: document.getElementById('zoneHeight'),
     useCurrentBtn: document.getElementById('useCurrentBtn'),
     addZoneBtn: document.getElementById('addZoneBtn'),
@@ -499,17 +503,16 @@
     return R * c;
   }
 
-  function gainForDistance(distance, radius) {
-    if (distance >= radius) return 0;
-    // Genormaliseerde afstand (0 = op het punt, 1 = op de rand van de zone)
-    const norm = distance / radius;
-    // Logaritmisch-achtige curve i.p.v. lineair/kwadratisch: menselijke geluids-
-    // perceptie is zelf al logaritmisch (dB-schaal), waardoor een lineaire volume-
-    // curve voelt als een lang "plateau" dichtbij voordat het pas laat wegvalt.
-    // Hier gebruiken we een inverse-log curve: snel verlies vlak bij de rand,
-    // maar een natuurlijker, geleidelijker verloop dan kwadratisch.
-    const raw = 1 - Math.log10(1 + norm * 9) / Math.log10(10); // log10(1..10) genormaliseerd naar 0..1
-    return Math.max(0, Math.min(1, raw));
+  // Oorsprong voor de AudioListener-coördinaten: de eerste GPS-fix wordt (0,0,0).
+  // Alle volgende posities worden uitgedrukt als meters t.o.v. die oorsprong.
+  // Zo kan de PannerNode de echte 3D-afstand berekenen voor zijn inverse-gain.
+  let listenerOrigin = null;
+
+  function latLonToMeters(lat, lon) {
+    if (!listenerOrigin) listenerOrigin = { lat, lon };
+    const dLat = (lat - listenerOrigin.lat) * 111320;
+    const dLon = (lon - listenerOrigin.lon) * 111320 * Math.cos(listenerOrigin.lat * Math.PI / 180);
+    return { x: dLon, z: -dLat }; // x = oost, z = -noord (Web Audio coördinatenstelsel)
   }
 
   // Peiling (bearing) in graden van punt 1 naar punt 2, 0 = noord, 90 = oost
@@ -753,13 +756,20 @@
     // en werkt merkbaar beter op korte transiënten zoals deze bursts dan op continue tonen.
     const panner = ctx.createPanner();
     panner.panningModel = 'HRTF';
-    panner.distanceModel = 'linear';
-    panner.refDistance = 1;
-    panner.maxDistance = 1000; // afstandsdemping laten we los van onze eigen gain-berekening
-    panner.rolloffFactor = 0; // we sturen volume al zelf aan via afstand-tot-zone; panner doet alleen richting
-    panner.positionX.value = 0;
-    panner.positionY.value = 0;
-    panner.positionZ.value = -1; // tijdelijk "voor je", wordt continu bijgewerkt in de interpolatie-loop
+    panner.distanceModel = 'inverse';
+    // refDistance = de afstand waarop gain precies 1.0 is. Bepaald door de
+    // volume-categorie van de zone: zacht geluid heeft een kleine refDistance
+    // (alleen van heel dichtbij vol hoorbaar), luid geluid een grote.
+    panner.refDistance = refDistanceForVolume(zone.volume || 'normal');
+    panner.maxDistance = 10000; // geen harde bovengrens: geluid verdwijnt vanzelf in ruis
+    panner.rolloffFactor = 1;   // echte inverse-kwadratenwet, geen kunstmatige curve
+    // Zone-positie in meters t.o.v. de listener-oorsprong (eerste GPS-fix).
+    // Zones staan stil, dus dit hoeft maar één keer bij aanmaken ingesteld te worden.
+    // De listener-positie beweegt live mee met GPS in updateAllZones().
+    const zoneMeters = latLonToMeters(zone.lat, zone.lon);
+    panner.positionX.value = zoneMeters.x;
+    panner.positionY.value = zone.height || 0;
+    panner.positionZ.value = zoneMeters.z;
 
     filter.connect(gainNode);
     gainNode.connect(panner);
@@ -781,8 +791,7 @@
     const node = {
       filter, panner, distanceFilter,
       gain: gainNode,
-      currentValue: 0,     // wat er nu daadwerkelijk klinkt (algeheel volume)
-      targetValue: 0,      // waar naartoe geïnterpoleerd wordt (algeheel volume)
+      currentValue: 0,     // benadering van de huidige PannerNode-gain, voor visuele feedback
       currentCutoff: 8000,   // huidige lowpass-cutoff (Hz), geïnterpoleerd net als wet/gain
       rhythm,
       timerId: null
@@ -813,17 +822,9 @@
   }
 
   // Doel bijwerken; de daadwerkelijke audio-waarde volgt via de interpolatie-loop hieronder,
-  // dus deze functie "springt" niet meer mee met elke (trage) GPS-update.
-  function setZoneGain(id, value) {
-    const node = zoneAudioNodes[id];
-    if (node) {
-      node.targetValue = value;
-    }
-  }
-
-  // Soepele, continue interpolatie tussen currentValue en targetValue, onafhankelijk
-  // van het (tragere, schoksgewijze) GPS-updatetempo. smoothing = hoeveel van de
-  // resterende afstand per frame wordt afgelegd; lager = vloeiender, hoger = sneller reagerend.
+  // Soepele, continue interpolatie voor visuele feedback (gain-balk, lijn-dikte),
+  // onafhankelijk van het GPS-updatetempo. De audio-gain zelf wordt nu volledig
+  // door de PannerNode geregeld via de inverse-kwadratenwet.
   function startInterpolationLoop() {
     const smoothing = 0.06;
     function tick() {
@@ -831,11 +832,17 @@
       zones.forEach(z => {
         const node = zoneAudioNodes[z.id];
         if (!node) return;
-        node.currentValue += (node.targetValue - node.currentValue) * smoothing;
-        if (Math.abs(node.targetValue - node.currentValue) < 0.001) {
-          node.currentValue = node.targetValue;
-        }
-        node.gain.gain.value = node.currentValue;
+
+        // gainNode altijd op 1: afstandsdemping wordt nu volledig door de
+        // PannerNode gedaan via de inverse-kwadratenwet. De gainNode dient
+        // alleen nog als aan/uit-schakelaar voor de burstgenerator zelf.
+        node.gain.gain.value = 1;
+
+        // currentValue: een benadering van de huidige PannerNode-gain, berekend
+        // in updateAllZones via de inverse-wet. Gebruikt voor visuele feedback
+        // (gain-balk, lijn-dikte op de kaart) — niet voor audio.
+        const visualGain = typeof z.visualGain === 'number' ? z.visualGain : 0;
+        node.currentValue += (visualGain - node.currentValue) * smoothing;
         if (node.currentValue > 0.01) activeCount++;
         updateGainMeter(z.id, node.currentValue);
 
@@ -849,34 +856,11 @@
         // nu uitgebreid met hoogte (Y-as) op basis van het handmatig ingestelde
         // height-attribuut van de zone en de horizontale GPS-afstand tot die zone.
         if (node.panner) {
-          let azimutDeg = 0;
-          if (smoothedHeading !== null && typeof z.bearingFromUser === 'number') {
-            azimutDeg = z.bearingFromUser - smoothedHeading;
-          }
-          // Elevatie: arctan(hoogte / horizontale afstand), in graden.
-          // height = hoogte van de zone boven jouw positie (in meters).
-          // bearingDistance = horizontale GPS-afstand (in meters), al berekend in updateAllZones.
-          // Bij afstand 0 (je staat op het punt zelf): plaatsen we de bron recht boven je
-          // als de hoogte > 0, via een veilige fallback (90°).
-          const hDist = z.lastDistance || 1; // horizontale afstand, bewaard op zone-object
-          const heightM = z.height || 0;
-          const elevRad = Math.atan2(heightM, hDist);
-          const azimRad = azimutDeg * Math.PI / 180;
-
-          // Sferisch → cartesisch (eenheidsvector op afstand 1 van de listener):
-          // x = cos(elev) × sin(azim)   (links/rechts)
-          // y = sin(elev)               (omhoog/omlaag)
-          // z = -cos(elev) × cos(azim)  (voor/achter, negatief = voor je)
-          const cosElev = Math.cos(elevRad);
-          const x = cosElev * Math.sin(azimRad);
-          const y = Math.sin(elevRad);
-          const zPos = -cosElev * Math.cos(azimRad);
-
-          if (node.panner.positionX) {
-            node.panner.positionX.value = x;
-            node.panner.positionY.value = y;
-            node.panner.positionZ.value = zPos;
-          }
+          // Zone-panner-positie wordt NIET meer per frame bijgewerkt: zones staan stil
+          // op hun vaste GPS-coördinaten (in meters, ingesteld bij createZoneAudio),
+          // en de AudioListener beweegt live mee in updateAllZones(). De PannerNode
+          // berekent zelf zowel de richting (voor HRTF) als de afstand (voor de
+          // inverse-gain) vanuit de relatieve positie van listener t.o.v. zone.
         }
       });
       // Mastergain mee laten ademen met aantal actieve zones, als extra veiligheid
@@ -1075,7 +1059,7 @@
     els.gpsStatus.textContent = 'gestopt';
     els.gpsToggle.textContent = 'Start GPS';
     zones.forEach(z => {
-      setZoneGain(z.id, 0);
+      z.visualGain = 0;
       updateZoneUI(z, null, 0);
     });
   }
@@ -1101,23 +1085,49 @@
   // --- Zones ---
   function updateAllZones() {
     if (!currentPos) return;
+
+    // AudioListener live bijwerken met de huidige GPS-positie in meters t.o.v.
+    // de oorsprong. De PannerNode berekent nu zelf de gain op basis van de
+    // echte 3D-afstand tussen listener en zone — geen JavaScript gain meer nodig.
+    const listenerMeters = latLonToMeters(currentPos.latitude, currentPos.longitude);
+    if (audioCtx && audioListener && audioListener.positionX) {
+      audioListener.positionX.value = listenerMeters.x;
+      audioListener.positionY.value = 0; // luisterhoogte: ooghoogte ≈ grondniveau
+      audioListener.positionZ.value = listenerMeters.z;
+
+      // AudioListener-oriëntatie: welke kant kijk je op? Nodig voor HRTF om
+      // links/rechts correct te berekenen. forwardX/Z beschrijft de "kijkrichting"
+      // als eenheidsvector; upY = 1 betekent dat "omhoog" de Y-as is.
+      if (smoothedHeading !== null && audioListener.forwardX) {
+        const headRad = smoothedHeading * Math.PI / 180;
+        audioListener.forwardX.value = Math.sin(headRad);
+        audioListener.forwardY.value = 0;
+        audioListener.forwardZ.value = -Math.cos(headRad);
+        audioListener.upX.value = 0;
+        audioListener.upY.value = 1;
+        audioListener.upZ.value = 0;
+      }
+    }
+
     zones.forEach(z => {
       const dist = haversine(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
-      // 3D-afstand: schuine afstand incl. hoogte. Een vleermuis op 15m hoogte en
-      // 10m horizontaal is ~18m van je af, niet 10m — gain moet dat reflecteren.
       const dist3d = Math.sqrt(dist * dist + (z.height || 0) * (z.height || 0));
-      const gain = gainForDistance(dist3d, z.radius);
       z.bearingFromUser = bearing(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
-      z.lastDistance = dist; // horizontale afstand bewaard voor elevatie-berekening
-      const proximity = Math.min(1, dist / z.radius); // 0 = op het punt zelf, 1 = op de rand
-      // Lowpass-cutoff: simuleert luchtabsorptie. Dichtbij (proximity 0) volledig
-      // open (8000 Hz), bij de rand (proximity 1) flink gedempt (~900 Hz). Niet
-      // lineair: de demping zet pas goed in vanaf de helft van het bereik, zodat
-      // het niet meteen bij elke kleine stap hoorbaar verandert.
-      const cutoffCurve = Math.pow(proximity, 1.6);
-      z.cutoffTarget = 8000 - cutoffCurve * 7100;
-      setZoneGain(z.id, gain);
-      updateZoneUI(z, dist, gain);
+      z.lastDistance = dist;
+
+      // Lowpass-cutoff: luchtabsorptie-simulatie, nu gekoppeld aan echte 3D-afstand
+      // i.p.v. een radius-proportie. Cutoff daalt geleidelijk naarmate het geluid
+      // verder weg is, met een plafond bij 8000 Hz (dichtbij) en vloer bij 500 Hz.
+      const cutoffCurve = Math.min(1, dist3d / 80); // 80m = volledig gedempt
+      z.cutoffTarget = 8000 - cutoffCurve * 7500;
+
+      // currentValue voor visuele feedback (gain-balk, kompasopacity, lijn-dikte):
+      // benadering van wat de PannerNode intern uitrekent via de inverse-wet.
+      const refDist = refDistanceForVolume(z.volume || 'normal');
+      const visualGain = Math.min(1, refDist / Math.max(dist3d, 0.1));
+      z.visualGain = visualGain;
+
+      updateZoneUI(z, dist, visualGain);
     });
   }
 
@@ -1211,17 +1221,24 @@
     localStorage.removeItem(STORAGE_KEY);
   }
 
+  // Vertaalt een volume-categorie naar een refDistance in meters (de afstand
+  // waarop de panner de gain op precies 1.0 houdt — dichter = luider dan 1.0,
+  // verder = zachter). Hogere refDistance = geluid draagt verder van nature.
+  function refDistanceForVolume(volume) {
+    return { soft: 2, normal: 15, loud: 40 }[volume] || 15;
+  }
+
   function addZone() {
     const name = els.zoneName.value.trim();
     const lat = parseFloat(els.zoneLat.value);
     const lon = parseFloat(els.zoneLon.value);
-    const radius = parseFloat(els.zoneRadius.value) || 25;
+    const volume = els.zoneVolume.value || 'normal';
     const height = parseFloat(els.zoneHeight.value) || 0;
 
     if (!name) { safeAlert('Geef de zone een naam.'); return; }
     if (isNaN(lat) || isNaN(lon)) { safeAlert('Vul geldige lat/lon waarden in, of gebruik "Gebruik huidige locatie".'); return; }
 
-    const zone = { id: nextZoneId++, name, lat, lon, radius, height, index: zones.length };
+    const zone = { id: nextZoneId++, name, lat, lon, volume, height, index: zones.length };
     zones.push(zone);
     renderZoneList();
     saveZonesToStorage();
@@ -1231,8 +1248,7 @@
 
     els.zoneName.value = '';
     els.zoneLat.value = '';
-    els.zoneLon.value = '';
-    els.zoneRadius.value = '25';
+    els.zoneVolume.value = 'normal';
     els.zoneHeight.value = '0';
 
     if (currentPos) updateAllZones();
