@@ -248,7 +248,7 @@
     <div id="map"></div>
     <div id="map-north-indicator">N <span id="map-north-arrow" style="display:inline-block;">↑</span></div>
   </div>
-  <div class="sub" style="margin:8px 0 0 0;">Blauwe pijl: jouw positie en kijkrichting. Groene stip: positie van een geluid (groeit naarmate hoorbaarder).</div>
+  <div class="sub" style="margin:8px 0 0 0;">Blauwe pijl: jouw positie en kijkrichting. Groene stip: positie van een geluid (feller = hoorbaar).</div>
 </div>
 
 <div class="panel">
@@ -948,9 +948,9 @@
       if (compass) compass.style.opacity = isAudible ? '1' : '0.35';
 
       if (zoneCircles[z.id]) {
-        zoneCircles[z.id].setRadius(6 + gainNow * 4);
+        zoneCircles[z.id].setRadius(6);
         zoneCircles[z.id].setStyle({
-          fillOpacity: isAudible ? 0.6 + gainNow * 0.4 : 0.3
+          fillOpacity: isAudible ? 0.9 : 0.3
         });
       }
 
