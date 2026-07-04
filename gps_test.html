@@ -920,6 +920,19 @@
     }
     updatePositionMarkerHeading();
 
+    // AudioListener-oriëntatie: welke kant kijk je op? Hier bijgewerkt op 60x/sec
+    // (in de rAF-loop) i.p.v. alleen bij GPS-updates — panning reageert nu direct
+    // op elke kompaswijziging, net als de visuele kompasnaaldjes.
+    if (audioCtx && audioListener && smoothedHeading !== null && audioListener.forwardX) {
+      const headRad = smoothedHeading * Math.PI / 180;
+      audioListener.forwardX.value = Math.sin(headRad);
+      audioListener.forwardY.value = 0;
+      audioListener.forwardZ.value = -Math.cos(headRad);
+      audioListener.upX.value = 0;
+      audioListener.upY.value = 1;
+      audioListener.upZ.value = 0;
+    }
+
     zones.forEach(z => {
       const needle = document.getElementById('compass-needle-' + z.id);
       const elevLabel = document.getElementById('compass-elev-' + z.id);
@@ -1113,27 +1126,11 @@
   function updateAllZones() {
     if (!currentPos) return;
 
-    // AudioListener live bijwerken met de huidige GPS-positie in meters t.o.v.
-    // de oorsprong. De PannerNode berekent nu zelf de gain op basis van de
-    // echte 3D-afstand tussen listener en zone — geen JavaScript gain meer nodig.
     const listenerMeters = latLonToMeters(currentPos.latitude, currentPos.longitude);
-    if (audioCtx && audioListener && audioListener.positionX) {
+    if (audioCtx && audioListener && audioListener.positionX && listenerMeters) {
       audioListener.positionX.value = listenerMeters.x;
-      audioListener.positionY.value = 0; // luisterhoogte: ooghoogte ≈ grondniveau
+      audioListener.positionY.value = 0;
       audioListener.positionZ.value = listenerMeters.z;
-
-      // AudioListener-oriëntatie: welke kant kijk je op? Nodig voor HRTF om
-      // links/rechts correct te berekenen. forwardX/Z beschrijft de "kijkrichting"
-      // als eenheidsvector; upY = 1 betekent dat "omhoog" de Y-as is.
-      if (smoothedHeading !== null && audioListener.forwardX) {
-        const headRad = smoothedHeading * Math.PI / 180;
-        audioListener.forwardX.value = Math.sin(headRad);
-        audioListener.forwardY.value = 0;
-        audioListener.forwardZ.value = -Math.cos(headRad);
-        audioListener.upX.value = 0;
-        audioListener.upY.value = 1;
-        audioListener.upZ.value = 0;
-      }
     }
 
     zones.forEach(z => {
