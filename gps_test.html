@@ -965,7 +965,7 @@
       }
       const node = zoneAudioNodes[z.id];
       const gainNow = node ? node.currentValue : 0;
-      const isAudible = gainNow > 0.05; // praktische drempel: onder 5% gain visueel als "stil"
+      const isAudible = gainNow > 0.10; // praktische drempel: onder 10% gain visueel als "stil"
       if (compass) compass.style.opacity = isAudible ? '1' : '0.35';
 
       if (zoneCircles[z.id]) {
