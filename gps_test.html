@@ -8,82 +8,39 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
 <style>
-  body { background: #0e1410; color: #e8efe9; font-family: sans-serif; padding: 20px; }
-  #map-outer { height: 300px; border-radius: 10px; overflow: hidden; }
-  #map { width: 100%; height: 100%; }
-  .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
-  .status-item { background: #161d18; padding: 10px; border-radius: 8px; }
-  button { width: 100%; padding: 12px; margin-top: 10px; border-radius: 8px; border: none; background: #1f8a4c; color: white; }
+/* ... (Hier moet je je originele CSS uit je eerste bericht weer terugplaatsen) ... */
 </style>
 </head>
 <body>
 
-<h1>GPS Crossfade Test</h1>
-<div id="map-outer"><div id="map"></div></div>
-
-<div class="status-grid">
-  <div class="status-item">GPS: <span id="gpsStatus">gestopt</span></div>
-  <div class="status-item">Kompas: <span id="compassValue">—</span></div>
-</div>
-<button id="gpsToggle">Start GPS</button>
-<button id="audioToggle">Activeer audio</button>
-
 <script>
 (function() {
-  let map, audioCtx, audioListener, currentPos, watchId;
-  let zones = [];
-  let smoothedHeading = 0;
-  let uiHeading = 0;
-
-  // 1. Initialisatie Kaart
-  function initMap() {
-    map = L.map('map', { rotate: true, rotateControl: false }).setView([52.0907, 5.1214], 16);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
-  }
-
-  // 2. De "Gouden Loop" (60 fps)
+  // ... (Behoud al je variabelen: zones, audioCtx, etc.) ...
+  
+  // DE AANPASSING:
+  // We halen updateAllZones() UIT de onPosition functie.
+  // We stoppen het in de tick() loop die 60x per sec draait.
+  
   function tick() {
-    if (currentPos && audioListener) {
-      // AudioListener continu bijwerken op basis van laatste GPS
-      const x = (currentPos.longitude - 5.1214) * 70000;
-      const z = (currentPos.latitude - 52.0907) * 111000;
-      audioListener.positionX.value = x;
-      audioListener.positionZ.value = -z;
+    if (currentPos) {
+       // Hier draait de audio-logica 60x per sec, dus ook als je stilstaat
+       // maar wel je telefoon draait.
+       updateAllZones(); 
+       updateCompassNeedles(); // Deze doet nu de map.setBearing en audioListener updates
     }
-
-    // Kaart en kompas continu bijwerken (vloeiende rotatie)
-    if (map && typeof map.setBearing === 'function') {
-      uiHeading += (smoothedHeading - uiHeading) * 0.1;
-      map.setBearing(-uiHeading);
-    }
-    
-    requestAnimationFrame(tick);
+    rafId = requestAnimationFrame(tick);
   }
-  requestAnimationFrame(tick);
+  
+  // Zorg dat je de bestaande tick() aanroep aan het einde van je script hebt:
+  rafId = requestAnimationFrame(tick);
 
-  // 3. Sensor & GPS Handlers
-  window.addEventListener('deviceorientation', (e) => {
-    smoothedHeading = e.webkitCompassHeading || (360 - e.alpha);
-    document.getElementById('compassValue').textContent = Math.round(smoothedHeading) + '°';
-  });
-
+  // --- De rest van je functies (onPosition, addZone, etc) laat je ongewijzigd ---
+  // --- Zorg er alleen voor dat je in onPosition() de aanroep naar updateAllZones() verwijdert ---
+  
   function onPosition(pos) {
-    currentPos = pos.coords;
-    document.getElementById('gpsStatus').textContent = 'actief';
+    // ... je code ...
+    // updateAllZones(); // <-- DEZE REGEL MOET JE HIER VERWIJDEREN!
   }
-
-  document.getElementById('gpsToggle').addEventListener('click', () => {
-    if (!watchId) {
-      watchId = navigator.geolocation.watchPosition(onPosition, console.error, {enableHighAccuracy: true});
-    }
-  });
-
-  document.getElementById('audioToggle').addEventListener('click', () => {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    audioListener = audioCtx.listener;
-  });
-
-  initMap();
 })();
 </script>
 </body>
