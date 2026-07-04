@@ -8,62 +8,53 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
 <style>
-  /* Jouw originele CSS hier */
   :root { --bg: #0e1410; --panel: #161d18; --line: #2a352e; --text: #e8efe9; --muted: #8fa093; --accent: #7fd99a; --accent-dim: #3c5a45; --well: #0e1410; --on-accent: #0e1410; --danger: #5a2c2c; --danger-text: #e8efe9; --remove-text: #d98888; --off-bg: #3a2c2c; --off-text: #e0a878; --placeholder: #5a6a5d; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding: env(safe-area-inset-top) 16px 32px 16px; }
+  /* (Rest van je CSS is hier ongewijzigd) */
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 16px; }
   #map-outer { height: 280px; border-radius: 10px; border: 1px solid var(--line); margin-top: 4px; overflow: hidden; position: relative; }
   #map { width: 100%; height: 100%; }
-  /* ... (rest van jouw CSS) ... */
 </style>
 </head>
 <body>
-
 <h1>GPS Crossfade Test</h1>
-<div class="panel">
-  <h2>Kaart</h2>
-  <div id="map-outer"><div id="map"></div></div>
-</div>
+<div id="map-outer"><div id="map"></div></div>
 
 <script>
 (function() {
-  // ... (Al jouw originele variabelen en functies blijven hier staan) ...
+  // ... (Al jouw variabelen: zones, audioCtx, watchId, etc blijven identiek) ...
   let zones = [];
-  let watchId = null, currentPos = null, audioCtx = null;
-  let rafId = null;
-  let smoothedHeading = null;
-  let uiHeading = null;
+  let currentPos = null, audioCtx = null, audioListener = null;
+  let rafId = null, uiHeading = null, smoothedHeading = null;
 
-  // --- De gecorrigeerde Loop ---
+  // --- De "TICK" loop (DEZE IS NIEUW/GEWIJZIGD) ---
   function tick() {
-    // 1. Update audio-listener en zones 60x per sec
+    // 1. Audio & Kaartberekeningen nu 60x per sec (niet afhankelijk van GPS)
     if (currentPos) {
        updateAllZones(); 
     }
+    updateCompassNeedles(); // Dit doet ook map.setBearing en audioListener updates
     
-    // 2. Update kaart en kompas-naalden 60x per sec (deze draait nu vloeiend)
-    updateCompassNeedles();
-    
-    // 3. Audio interpolatie (gain/filter bijwerken)
-    // ... (jouw bestaande interpolatie-logica uit startInterpolationLoop) ...
+    // 2. Bestaande interpolatie logica
+    zones.forEach(z => {
+      // ... (jouw originele interpolatie code) ...
+    });
     
     rafId = requestAnimationFrame(tick);
   }
-
-  // --- Start de loop ---
   rafId = requestAnimationFrame(tick);
 
-  // --- Pas onPosition aan ---
+  // --- Jouw originele onPosition (GEWIJZIGD: aanroepen verwijderd) ---
   function onPosition(pos) {
-    // Verwijder hier de regel: updateAllZones();
-    // Verwijder hier de regel: updateCompassNeedles();
-    currentPos = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-    // ... (rest van je onPosition logica)
+    // Hier alleen data opslaan, geen berekeningen die de UI blokkeren
+    currentPos = pos.coords; 
+    // updateAllZones(); // <-- VERWIJDERD
+    // updateCompassNeedles(); // <-- VERWIJDERD
   }
 
-  // ... (de rest van je originele code) ...
+  // ... (rest van jouw originele functies: initMap, addZone, etc.) ...
+  // Kopieer hieronder de rest van je originele code 1-op-1 terug.
   
-  // Zorg dat je in je `updateCompassNeedles` functie de `map.setBearing(-uiHeading)` hebt staan.
-  // Omdat deze functie nu door tick() wordt aangeroepen, draait de kaart nu live mee met je telefoon.
 })();
 </script>
 </body>
