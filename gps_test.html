@@ -324,7 +324,7 @@
 </div>
 
 <div class="footnote">
-  Crossfade-logica: gain = (1 − afstand/radius)², geclampt tussen 0 en 1, exact zoals in de productie-PWA. Geen audiobestanden nodig: elke zone speelt korte, ritmische ruisbursts (band-passed witte ruis, mid-high frequenties) op een eigen tempo en klankkleur, beter geschikt om richting/ruimtelijkheid op te beoordelen dan een continue toon. Werkt het beste buiten, met telefoon in handen (niet in broekzak, voor betere GPS-nauwkeurigheid).
+  Afstandsgedrag: geluiden worden gedempt via de inverse-kwadratenwet (PannerNode distanceModel: inverse), precies zoals in de werkelijkheid. Geen harde radius-grens — geluiden verdwijnen geleidelijk in de ruis. De volume-categorie per zone (zacht/normaal/luid) bepaalt de refDistance: hoe ver het geluid van nature draagt. Elke zone speelt ritmische ruisbursts als testsignaal; in de volgende fase vervangen door echte field recordings.
   <br><br>
   Ruimtelijke laag (experimenteel): elke zone wordt via een PannerNode (HRTF) geplaatst in de richting waarin hij daadwerkelijk ligt, op basis van de peiling (bearing) tussen jouw GPS-positie en de zone, gecorrigeerd met je kompasrichting. Het volume blijft volledig bepaald door afstand (rolloffFactor = 0); de panner regelt alléén richting, niet sterkte. Kompasdata is van nature ruizig — er zit een sterke demping op (smoothing) om schokkerige richtingswisselingen te voorkomen, maar verwacht geen perfecte precisie. Activeer de richtingssensor pas ná audio, en geef toestemming wanneer iOS daarom vraagt.
   <br><br>
@@ -1173,11 +1173,11 @@
 
     if (meta) {
       meta.textContent = dist === null
-        ? `radius ${zone.radius} m · hoogte ${zone.height || 0} m`
-        : `${Math.round(dist)} m · r ${zone.radius} m · h ${zone.height || 0} m · gain ${gain.toFixed(2)}`;
+        ? `volume: ${zone.volume || 'normal'} · hoogte ${zone.height || 0} m`
+        : `${Math.round(dist)} m · ${zone.volume || 'normal'} · h ${zone.height || 0} m`;
     }
     if (pill) {
-      if (gain > 0) {
+      if (gain > 0.10) {
         pill.textContent = 'hoorbaar';
         pill.classList.remove('off');
       } else {
@@ -1198,7 +1198,7 @@
         <div class="zone-head">
           <div>
             <div class="zone-name">${zone.name}</div>
-            <div class="zone-meta" id="meta-${zone.id}">radius ${zone.radius} m · hoogte ${zone.height || 0} m</div>
+            <div class="zone-meta" id="meta-${zone.id}">volume: ${zone.volume || 'normal'} · hoogte ${zone.height || 0} m</div>
           </div>
           <div style="display:flex;align-items:center;gap:10px;">
             <svg id="compass-${zone.id}" width="36" height="36" viewBox="-18 -18 36 36"
