@@ -507,34 +507,6 @@
   }
 
   // Oorsprong voor de AudioListener-coördinaten: de eerste GPS-fix wordt (0,0,0).
-  // Oorsprong voor het Audio-coördinatenstelsel: altijd de eerste GPS-fix.
-  // Nooit een zone-coördinaat (zones worden soms vóór de eerste GPS-fix geladen
-  // uit localStorage, wat anders een verkeerde oorsprong zou instellen).
-  let listenerOrigin = null;
-
-  function latLonToMeters(lat, lon) {
-    if (!listenerOrigin) return null; // oorsprong nog onbekend, wacht op GPS-fix
-    const dLat = (lat - listenerOrigin.lat) * 111320;
-    const dLon = (lon - listenerOrigin.lon) * 111320 * Math.cos(listenerOrigin.lat * Math.PI / 180);
-    return { x: dLon, z: -dLat }; // x = oost, z = -noord (Web Audio coördinatenstelsel)
-  }
-
-  function setListenerOrigin(lat, lon) {
-    if (listenerOrigin) return; // alleen de allereerste GPS-fix
-    listenerOrigin = { lat, lon };
-    // Nu de oorsprong bekend is: panner-posities van al-bestaande zones bijwerken
-    // (zones geladen uit localStorage hadden nog geen geldige positie)
-    zones.forEach(z => {
-      const node = zoneAudioNodes[z.id];
-      if (!node || !node.panner) return;
-      const m = latLonToMeters(z.lat, z.lon);
-      if (!m) return;
-      node.panner.positionX.value = m.x;
-      node.panner.positionY.value = z.height || 0;
-      node.panner.positionZ.value = m.z;
-    });
-  }
-
   // Peiling (bearing) in graden van punt 1 naar punt 2, 0 = noord, 90 = oost
   function bearing(lat1, lon1, lat2, lon2) {
     const toRad = (d) => d * Math.PI / 180;
@@ -746,12 +718,12 @@
   // ook qua karakter (tempo/klankkleur) uit elkaar te houden zijn, niet alleen qua richting.
   function rhythmForIndex(i) {
     const patterns = [
-      { interval: 1.4,  burst: 0.05,  filterFreq: 2200, q: 1.2 },
-      { interval: 1.9,  burst: 0.04,  filterFreq: 3200, q: 1.5 },
-      { interval: 1.1,  burst: 0.06,  filterFreq: 1800, q: 1.0 },
-      { interval: 2.3,  burst: 0.045, filterFreq: 4000, q: 1.8 },
-      { interval: 1.6,  burst: 0.035, filterFreq: 2700, q: 1.3 },
-      { interval: 2.1,  burst: 0.055, filterFreq: 1500, q: 1.1 },
+      { interval: 1.4,  burst: 0.05,  filterFreq: 2200, q: 1.2, toneFreq: 220  },
+      { interval: 1.9,  burst: 0.04,  filterFreq: 3200, q: 1.5, toneFreq: 330  },
+      { interval: 1.1,  burst: 0.06,  filterFreq: 1800, q: 1.0, toneFreq: 165  },
+      { interval: 2.3,  burst: 0.045, filterFreq: 4000, q: 1.8, toneFreq: 440  },
+      { interval: 1.6,  burst: 0.035, filterFreq: 2700, q: 1.3, toneFreq: 277  },
+      { interval: 2.1,  burst: 0.055, filterFreq: 1500, q: 1.1, toneFreq: 185  },
     ];
     return patterns[i % patterns.length];
   }
@@ -783,13 +755,11 @@
     panner.refDistance = refDistanceForVolume(zone.volume || 'normal');
     panner.maxDistance = 10000; // geen harde bovengrens: geluid verdwijnt vanzelf in ruis
     panner.rolloffFactor = 1;   // echte inverse-kwadratenwet, geen kunstmatige curve
-    // Zone-positie in meters t.o.v. de listener-oorsprong (eerste GPS-fix).
-    // Als de oorsprong nog niet bekend is (GPS nog niet gestart), tijdelijk op
-    // (0,0,0) plaatsen — setListenerOrigin() corrigeert dit zodra GPS binnenkomt.
-    const zoneMeters = latLonToMeters(zone.lat, zone.lon);
-    panner.positionX.value = zoneMeters ? zoneMeters.x : 0;
+    // Zone-positie wordt bij elke GPS-update herberekend in updateAllZones().
+    // Initieel op (0,0,0) — wordt direct bijgewerkt zodra GPS binnenkomt.
+    panner.positionX.value = 0;
     panner.positionY.value = zone.height || 0;
-    panner.positionZ.value = zoneMeters ? zoneMeters.z : 0;
+    panner.positionZ.value = 0;
 
     filter.connect(gainNode);
     gainNode.connect(panner);
@@ -822,17 +792,34 @@
     // source kan maar één keer starten), met een korte attack/decay-envelope
     // zodat het tikt in plaats van klikt.
     function scheduleBurst() {
+      const now = ctx.currentTime;
+      const toneDuration = rhythm.burst * 3; // toon klinkt iets langer na dan de ruis
+
+      // Ruisburst
       const src = ctx.createBufferSource();
       src.buffer = getNoiseBuffer(ctx);
       const burstGain = ctx.createGain();
-      const now = ctx.currentTime;
       burstGain.gain.setValueAtTime(0, now);
-      burstGain.gain.linearRampToValueAtTime(1, now + 0.005); // snelle attack
-      burstGain.gain.exponentialRampToValueAtTime(0.001, now + rhythm.burst); // korte decay
+      burstGain.gain.linearRampToValueAtTime(1, now + 0.005);
+      burstGain.gain.exponentialRampToValueAtTime(0.001, now + rhythm.burst);
       src.connect(burstGain);
       burstGain.connect(filter);
       src.start(now);
       src.stop(now + rhythm.burst + 0.02);
+
+      // Zachte sinustoon tegelijk: geeft elke zone een herkenbare "stem".
+      // Iets langer dan de burst zodat hij zacht naklinkt — ping-karakter.
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = rhythm.toneFreq;
+      const toneGain = ctx.createGain();
+      toneGain.gain.setValueAtTime(0, now);
+      toneGain.gain.linearRampToValueAtTime(0.35, now + 0.008); // zachter dan de ruis
+      toneGain.gain.exponentialRampToValueAtTime(0.001, now + toneDuration);
+      osc.connect(toneGain);
+      toneGain.connect(gainNode); // rechtstreeks naar gainNode, niet door de bandpass-filter
+      osc.start(now);
+      osc.stop(now + toneDuration + 0.02);
     }
 
     node.timerId = setInterval(scheduleBurst, rhythm.interval * 1000);
@@ -1117,7 +1104,6 @@
     els.accValue.textContent = Math.round(raw.accuracy) + ' m';
     els.latValue.textContent = currentPos.latitude.toFixed(6);
     els.lonValue.textContent = currentPos.longitude.toFixed(6);
-    setListenerOrigin(currentPos.latitude, currentPos.longitude);
     updatePositionMarker(currentPos.latitude, currentPos.longitude);
     updateAllZones();
   }
@@ -1131,17 +1117,21 @@
   });
 
   // --- Zones ---
+  // Audio-coördinaten: listener staat altijd op (0,0,0). Zones worden bij elke
+  // GPS-update opnieuw berekend als relatieve positie t.o.v. de huidige listener.
+  // Eenvoudiger en robuuster dan een vaste oorsprong met grote absolute waarden.
+
   function updateAllZones() {
     if (!currentPos) return;
 
-    const listenerMeters = latLonToMeters(currentPos.latitude, currentPos.longitude);
-    if (audioCtx && audioListener && listenerMeters) {
+    // Listener altijd op (0,0,0) — zones bewegen relatief
+    if (audioCtx && audioListener) {
       if (audioListener.positionX) {
-        audioListener.positionX.value = listenerMeters.x;
+        audioListener.positionX.value = 0;
         audioListener.positionY.value = 0;
-        audioListener.positionZ.value = listenerMeters.z;
+        audioListener.positionZ.value = 0;
       } else if (typeof audioListener.setPosition === 'function') {
-        audioListener.setPosition(listenerMeters.x, 0, listenerMeters.z);
+        audioListener.setPosition(0, 0, 0);
       }
     }
 
@@ -1151,19 +1141,33 @@
       z.bearingFromUser = bearing(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
       z.lastDistance = dist;
 
-      // Lowpass-cutoff: luchtabsorptie-simulatie, nu gekoppeld aan echte 3D-afstand
-      // i.p.v. een radius-proportie. Cutoff daalt geleidelijk naarmate het geluid
-      // verder weg is, met een plafond bij 8000 Hz (dichtbij) en vloer bij 500 Hz.
-      const cutoffCurve = Math.min(1, dist3d / 80); // 80m = volledig gedempt
+      // Zone-positie relatief t.o.v. huidige listener-positie in meters
+      const dLat = (z.lat - currentPos.latitude) * 111320;
+      const dLon = (z.lon - currentPos.longitude) * 111320 * Math.cos(currentPos.latitude * Math.PI / 180);
+      const zoneX = dLon;
+      const zoneY = z.height || 0;
+      const zoneZ = -dLat;
+
+      const node = zoneAudioNodes[z.id];
+      if (node && node.panner) {
+        if (node.panner.positionX) {
+          node.panner.positionX.value = zoneX;
+          node.panner.positionY.value = zoneY;
+          node.panner.positionZ.value = zoneZ;
+        } else if (typeof node.panner.setPosition === 'function') {
+          node.panner.setPosition(zoneX, zoneY, zoneZ);
+        }
+      }
+
+      // Lowpass-cutoff: luchtabsorptie-simulatie
+      const cutoffCurve = Math.min(1, dist3d / 80);
       z.cutoffTarget = 8000 - cutoffCurve * 7500;
 
-      // currentValue voor visuele feedback (gain-balk, kompasopacity, lijn-dikte):
-      // benadering van wat de PannerNode intern uitrekent via de inverse-wet.
+      // visualGain: benadering van PannerNode-gain voor visuele feedback
       const refDist = refDistanceForVolume(z.volume || 'normal');
-      const visualGain = Math.min(1, refDist / Math.max(dist3d, 0.1));
-      z.visualGain = visualGain;
+      z.visualGain = Math.min(1, refDist / Math.max(dist3d, 0.1));
 
-      updateZoneUI(z, dist, visualGain);
+      updateZoneUI(z, dist, z.visualGain);
     });
   }
 
