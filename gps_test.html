@@ -339,6 +339,13 @@
   let watchId = null;
   let currentPos = null;
   let smoothedPos = null; // exponentieel gewogen gemiddelde over GPS-fixes
+  // displayedPos: de positie die daadwerkelijk gebruikt wordt voor kaart-marker
+  // EN audio-berekening, 60x/sec geïnterpoleerd richting currentPos (de laatste
+  // GPS-fix). Dit is de fix voor het "geluid loopt achter"-probleem: voorheen
+  // werd de audio-positie alleen bijgewerkt bij een nieuwe GPS-tick (1x/sec of
+  // trager), terwijl de kaart-marker via Leaflet's eigen panTo-animatie wél
+  // vloeiend bewoog. Nu delen kaart en geluid dezelfde, continu bewegende bron.
+  let displayedPos = null;
   let audioCtx = null;
   const zoneAudioNodes = {}; // id -> { osc, gain }
   let nextZoneId = 1;
@@ -436,13 +443,17 @@
     } else {
       positionMarker.setLatLng([lat, lon]);
     }
-    // Eerste fix: centreer met hogere zoom; daarna: zachte panTo zodat de
-    // positie altijd gecentreerd blijft zonder schokkerige view-resets.
+    // Eerste fix: centreer met hogere zoom. Daarna GEEN Leaflet panTo-animatie
+    // meer: deze functie wordt nu zelf 60x/sec aangeroepen met een al continu
+    // geïnterpoleerde positie (zie displayedPos in de rAF-loop), dus een extra
+    // animatielaag hierbovenop zou de beweging alleen maar vertragen/vervlakken
+    // (en liep voorheen bovendien los van de audio-interpolatie — vandaar de
+    // mismatch tussen wat je zag en wat je hoorde).
     if (!hasCenteredOnFirstFix) {
       map.setView([lat, lon], 18);
       hasCenteredOnFirstFix = true;
     } else {
-      map.panTo([lat, lon], { animate: true, duration: 0.5 });
+      map.panTo([lat, lon], { animate: false });
     }
   }
 
@@ -621,22 +632,10 @@
       masterGain.gain.value = 0.8;
 
       // --- Omgevings-reverb (op de totale output, niet per zone) ---
-      // Dit simuleert de akoestiek van de plek waar JIJ loopt (open straat versus
-      // bijvoorbeeld onder een lindenlaan), in plaats van een eigenschap van elk
-      // afzonderlijk geluid. Alles wat klinkt deelt dezelfde ruimte-akoestiek.
-      // Eén ConvolverNode met een synthetische "buiten-op-straat"-IR: schaarse,
-      // korte vroege reflecties (geen dichte kamer-reflecties) gevolgd door een
-      // relatief snelle decay (geen lang nakaatsend plafond zoals binnen).
-      // Dit is een placeholder; voor het echte project vervang je deze buffer
-      // straks door een opname van een sweep/clap, gemaakt op de Maliebaan zelf.
       reverbConvolver = audioCtx.createConvolver();
       reverbConvolver.buffer = generateOutdoorImpulseResponse(audioCtx);
       reverbConvolver.normalize = true;
 
-      // Parallelle dry/wet-splitsing van de volledige mix. globalWetAmount is
-      // voor nu een vaste, instelbare waarde (geen locatiekoppeling) — bedoeld
-      // om te voelen of omgevings-reverb het juiste idee is, voordat dat later
-      // gekoppeld wordt aan waar je je bevindt (straat/lindenlaan/etc).
       masterDry = audioCtx.createGain();
       masterWet = audioCtx.createGain();
       masterDry.gain.value = 1 - globalWetAmount;
@@ -648,9 +647,6 @@
       masterDry.connect(limiter);
       masterWet.connect(limiter);
 
-      // AudioListener: de "oren" van de luisteraar in de 3D-ruimte. We zetten 'm
-      // standaard op kijkend naar het noorden (0,0,-1) en draaien 'm continu mee
-      // met het kompas in de interpolatie-loop.
       audioListener = audioCtx.listener;
       if (audioListener.positionX) {
         audioListener.positionX.value = 0;
@@ -666,10 +662,6 @@
     return audioCtx;
   }
 
-  // Genereert een korte, synthetische impulse response voor een buitenruimte:
-  // een paar schaarse, willekeurig getimede vroege reflecties (eerste ~80ms)
-  // gevolgd door een vrij snel uitstervende, ruisachtige staart (~0.6s totaal).
-  // Geen samples nodig; puur procedureel, bedoeld als realistisch genoeg startpunt.
   function generateOutdoorImpulseResponse(ctx) {
     const duration = 0.6;
     const length = Math.floor(ctx.sampleRate * duration);
@@ -677,30 +669,22 @@
 
     for (let channel = 0; channel < 2; channel++) {
       const data = buffer.getChannelData(channel);
-
-      // Vroege reflecties: een handvol losse, korte tikken in de eerste ~80ms,
-      // op net iets andere tijdstippen per kanaal voor wat stereobreedte.
       const earlyReflectionCount = 5;
       for (let r = 0; r < earlyReflectionCount; r++) {
         const t = 0.005 + Math.random() * 0.075;
         const idx = Math.floor(t * ctx.sampleRate);
-        const amp = 0.4 * Math.pow(0.6, r); // elke volgende reflectie zwakker
+        const amp = 0.4 * Math.pow(0.6, r);
         if (idx < length) data[idx] += (Math.random() * 2 - 1) * amp;
       }
-
-      // Diffuse staart: exponentieel uitstervende ruis, typisch voor open buitenlucht
-      // (geen lange, dichte nagalm zoals binnen, wel een kort "lucht"-gevoel).
       for (let i = 0; i < length; i++) {
         const t = i / ctx.sampleRate;
-        const envelope = Math.exp(-t * 9); // relatief snelle decay
+        const envelope = Math.exp(-t * 9);
         data[i] += (Math.random() * 2 - 1) * envelope * 0.35;
       }
     }
     return buffer;
   }
 
-  // Eén gedeelde, vooraf gegenereerde ruisbuffer (2 sec wit ruis), hergebruikt door alle zones.
-  // Voorkomt dat we per zone een nieuwe buffer hoeven te genereren.
   let sharedNoiseBuffer = null;
   function getNoiseBuffer(ctx) {
     if (sharedNoiseBuffer) return sharedNoiseBuffer;
@@ -714,8 +698,6 @@
     return buffer;
   }
 
-  // Verschillende ritmes en mid-high frequentiebanden per zone-index, zodat zones
-  // ook qua karakter (tempo/klankkleur) uit elkaar te houden zijn, niet alleen qua richting.
   function rhythmForIndex(i) {
     const patterns = [
       { interval: 1.4,  burst: 0.05,  filterFreq: 2200, q: 1.2, toneFreq: 220  },
@@ -732,31 +714,20 @@
     const ctx = ensureAudioContext();
     const rhythm = rhythmForIndex(zone.index);
 
-    // Gezamenlijke gain die door de interpolatie-loop wordt aangestuurd (afstand -> volume)
     const gainNode = ctx.createGain();
     gainNode.gain.value = 0;
 
-    // Bandpass-filter: laat alleen mid-high frequenties van de ruis door,
-    // geeft een "tikkend"/insectachtig karakter in plaats van een dof gesis.
     const filter = ctx.createBiquadFilter();
     filter.type = 'bandpass';
     filter.frequency.value = rhythm.filterFreq;
     filter.Q.value = rhythm.q;
 
-    // PannerNode: plaatst de zone ruimtelijk t.o.v. de listener (jouw positie/kijkrichting).
-    // HRTF zorgt voor een natuurlijker links/rechts/voor/achter-gevoel dan simpele stereopanning,
-    // en werkt merkbaar beter op korte transiënten zoals deze bursts dan op continue tonen.
     const panner = ctx.createPanner();
     panner.panningModel = 'HRTF';
     panner.distanceModel = 'inverse';
-    // refDistance = de afstand waarop gain precies 1.0 is. Bepaald door de
-    // volume-categorie van de zone: zacht geluid heeft een kleine refDistance
-    // (alleen van heel dichtbij vol hoorbaar), luid geluid een grote.
     panner.refDistance = refDistanceForVolume(zone.volume || 'normal');
-    panner.maxDistance = 10000; // geen harde bovengrens: geluid verdwijnt vanzelf in ruis
-    panner.rolloffFactor = 1;   // echte inverse-kwadratenwet, geen kunstmatige curve
-    // Zone-positie wordt bij elke GPS-update herberekend in updateAllZones().
-    // Initieel op (0,0,0) — wordt direct bijgewerkt zodra GPS binnenkomt.
+    panner.maxDistance = 10000;
+    panner.rolloffFactor = 1;
     panner.positionX.value = 0;
     panner.positionY.value = zone.height || 0;
     panner.positionZ.value = 0;
@@ -764,15 +735,9 @@
     filter.connect(gainNode);
     gainNode.connect(panner);
 
-    // Afstand-lowpass: simuleert luchtabsorptie (air absorption) — hoge
-    // frequenties dempen sneller dan lage naarmate geluid verder moet reizen.
-    // Dichtbij: open/helder (hoge cutoff). Ver weg: dof/gedempt (lage cutoff).
-    // Dit is een psychoakoestische afstandscue bovenop volume, en bijzonder
-    // relevant bij deze synthetische, ruisrijke klanken die zonder deze demping
-    // op elke afstand even "scherp" blijven klinken.
     const distanceFilter = ctx.createBiquadFilter();
     distanceFilter.type = 'lowpass';
-    distanceFilter.frequency.value = 8000; // start: volledig open, wordt bijgewerkt o.b.v. afstand
+    distanceFilter.frequency.value = 8000;
     distanceFilter.Q.value = 0.7;
 
     panner.connect(distanceFilter);
@@ -781,21 +746,16 @@
     const node = {
       filter, panner, distanceFilter,
       gain: gainNode,
-      currentValue: 0,     // benadering van de huidige PannerNode-gain, voor visuele feedback
-      currentCutoff: 8000,   // huidige lowpass-cutoff (Hz), geïnterpoleerd net als wet/gain
+      currentValue: 0,
+      currentCutoff: 8000,
       rhythm,
       timerId: null
     };
 
-    // Ritmische scheduler: elke `interval` seconden een korte ruisburst afspelen.
-    // Elke burst is een losse BufferSource (vereiste van de Web Audio API: een
-    // source kan maar één keer starten), met een korte attack/decay-envelope
-    // zodat het tikt in plaats van klikt.
     function scheduleBurst() {
       const now = ctx.currentTime;
-      const toneDuration = rhythm.burst * 3; // toon klinkt iets langer na dan de ruis
+      const toneDuration = rhythm.burst * 3;
 
-      // Ruisburst
       const src = ctx.createBufferSource();
       src.buffer = getNoiseBuffer(ctx);
       const burstGain = ctx.createGain();
@@ -807,31 +767,25 @@
       src.start(now);
       src.stop(now + rhythm.burst + 0.02);
 
-      // Zachte sinustoon tegelijk: geeft elke zone een herkenbare "stem".
-      // Iets langer dan de burst zodat hij zacht naklinkt — ping-karakter.
       const osc = ctx.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = rhythm.toneFreq;
       const toneGain = ctx.createGain();
       toneGain.gain.setValueAtTime(0, now);
-      toneGain.gain.linearRampToValueAtTime(0.35, now + 0.008); // zachter dan de ruis
+      toneGain.gain.linearRampToValueAtTime(0.35, now + 0.008);
       toneGain.gain.exponentialRampToValueAtTime(0.001, now + toneDuration);
       osc.connect(toneGain);
-      toneGain.connect(gainNode); // rechtstreeks naar gainNode, niet door de bandpass-filter
+      toneGain.connect(gainNode);
       osc.start(now);
       osc.stop(now + toneDuration + 0.02);
     }
 
     node.timerId = setInterval(scheduleBurst, rhythm.interval * 1000);
-    scheduleBurst(); // meteen een eerste tik, niet pas na het eerste interval
+    scheduleBurst();
 
     zoneAudioNodes[zone.id] = node;
   }
 
-  // Doel bijwerken; de daadwerkelijke audio-waarde volgt via de interpolatie-loop hieronder,
-  // Soepele, continue interpolatie voor visuele feedback (gain-balk, lijn-dikte),
-  // onafhankelijk van het GPS-updatetempo. De audio-gain zelf wordt nu volledig
-  // door de PannerNode geregeld via de inverse-kwadratenwet.
   function startInterpolationLoop() {
     const smoothing = 0.06;
     function tick() {
@@ -840,28 +794,18 @@
         const node = zoneAudioNodes[z.id];
         if (!node) return;
 
-        // gainNode altijd op 1: afstandsdemping wordt nu volledig door de
-        // PannerNode gedaan via de inverse-kwadratenwet. De gainNode dient
-        // alleen nog als aan/uit-schakelaar voor de burstgenerator zelf.
         node.gain.gain.value = 1;
 
-        // currentValue: een benadering van de huidige PannerNode-gain, berekend
-        // in updateAllZones via de inverse-wet. Gebruikt voor visuele feedback
-        // (gain-balk, lijn-dikte op de kaart) — niet voor audio.
         const visualGain = typeof z.visualGain === 'number' ? z.visualGain : 0;
         node.currentValue += (visualGain - node.currentValue) * smoothing;
         if (node.currentValue > 0.01) activeCount++;
         updateGainMeter(z.id, node.currentValue);
 
-        // Afstand-lowpass: cutoff-frequentie meebewegen met afstand (luchtabsorptie-simulatie).
         if (node.distanceFilter && typeof z.cutoffTarget === 'number') {
           node.currentCutoff += (z.cutoffTarget - node.currentCutoff) * smoothing;
           node.distanceFilter.frequency.value = node.currentCutoff;
         }
 
-        // Ruimtelijke positionering: hoek van de zone t.o.v. waar je kijkt (kompas),
-        // nu uitgebreid met hoogte (Y-as) op basis van het handmatig ingestelde
-        // height-attribuut van de zone en de horizontale GPS-afstand tot die zone.
         if (node.panner) {
           // Zone-panner-positie wordt NIET meer per frame bijgewerkt: zones staan stil
           // op hun vaste GPS-coördinaten (in meters, ingesteld bij createZoneAudio),
@@ -870,8 +814,6 @@
           // inverse-gain) vanuit de relatieve positie van listener t.o.v. zone.
         }
       });
-      // Mastergain mee laten ademen met aantal actieve zones, als extra veiligheid
-      // bovenop de limiter (voorkomt dat 5+ volle zones alsnog samen pieken).
       if (masterGain && audioCtx) {
         const headroom = activeCount <= 2 ? 0.8 : 0.8 * (2 / activeCount);
         masterGain.gain.setTargetAtTime(Math.max(0.35, headroom), audioCtx.currentTime, 0.3);
@@ -887,16 +829,30 @@
     if (fill) fill.style.width = (value * 100).toFixed(0) + '%';
   }
 
-  // Kompasnaald per zone wordt bijgewerkt in de rAF-loop (niet alleen bij GPS-updates),
-  // zodat hij ook reageert als jij draait zonder dat er een nieuwe GPS-positie binnenkomt.
-  // Aparte uiHeading met iets meer demping dan smoothedHeading (die puur voor audio is):
-  // de naald ververst 60x/sec, waardoor zelfs sub-graadruis als jitter zichtbaar wordt
-  // als we de ruwe audio-heading gebruiken. uiHeading volgt trager maar stabiel.
   let uiHeading = null;
 
+  // Interpoleert displayedPos continu (60x/sec) richting currentPos, het meest
+  // recente GPS-doel. smoothing=0.12 convergeert in ~0.3s bij 60fps — snel
+  // genoeg om niet als "traag" te voelen, maar nog steeds vloeiend i.p.v. een
+  // harde sprong bij elke nieuwe GPS-fix. Dit is dezelfde aanpak als bij het
+  // kompas (dat al wel direct aanvoelde): niet wachten op de volgende ruwe
+  // meting, maar continu naar het laatste doel toe bewegen.
+  function updateDisplayedPosition() {
+    if (!currentPos) return;
+    if (!displayedPos) {
+      // Eerste fix: geen interpolatie nodig, meteen op de juiste plek starten.
+      displayedPos = { latitude: currentPos.latitude, longitude: currentPos.longitude };
+    } else {
+      const posSmoothing = 0.12;
+      displayedPos.latitude += (currentPos.latitude - displayedPos.latitude) * posSmoothing;
+      displayedPos.longitude += (currentPos.longitude - displayedPos.longitude) * posSmoothing;
+    }
+    updatePositionMarker(displayedPos.latitude, displayedPos.longitude);
+    updateAllZones();
+  }
+
   function updateCompassNeedles() {
-    // UI-heading: zelfde outlier-filter als smoothedHeading, maar hogere demping
-    // zodat de visuele naald stabiel is zonder te "slepen".
+    updateDisplayedPosition();
     if (smoothedHeading !== null) {
       if (uiHeading === null) {
         uiHeading = smoothedHeading;
@@ -907,15 +863,11 @@
     }
     updatePositionMarkerHeading();
 
-    // AudioListener-oriëntatie: welke kant kijk je op? Hier bijgewerkt op 60x/sec
-    // (in de rAF-loop) i.p.v. alleen bij GPS-updates — panning reageert nu direct
-    // op elke kompaswijziging, net als de visuele kompasnaaldjes.
     if (audioCtx && audioListener && smoothedHeading !== null) {
       const headRad = smoothedHeading * Math.PI / 180;
       const fx = Math.sin(headRad);
       const fz = -Math.cos(headRad);
       if (audioListener.forwardX) {
-        // Moderne API (AudioParam-gebaseerd)
         audioListener.forwardX.value = fx;
         audioListener.forwardY.value = 0;
         audioListener.forwardZ.value = fz;
@@ -923,7 +875,6 @@
         audioListener.upY.value = 1;
         audioListener.upZ.value = 0;
       } else if (typeof audioListener.setOrientation === 'function') {
-        // Oudere API (Safari/WebKit fallback)
         audioListener.setOrientation(fx, 0, fz, 0, 1, 0);
       }
     }
@@ -933,11 +884,9 @@
       const elevLabel = document.getElementById('compass-elev-' + z.id);
       const compass = document.getElementById('compass-' + z.id);
 
-      // Bearing live herberekenen vanuit huidige positie zodat de naald niet
-      // wegdrijft tussen GPS-updates wanneer je tegelijk loopt én draait.
       let bearingDeg = z.bearingFromUser;
-      if (currentPos && typeof z.lat === 'number') {
-        bearingDeg = bearing(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
+      if (displayedPos && typeof z.lat === 'number') {
+        bearingDeg = bearing(displayedPos.latitude, displayedPos.longitude, z.lat, z.lon);
       }
       if (typeof bearingDeg !== 'number') return;
 
@@ -952,7 +901,7 @@
       }
       const node = zoneAudioNodes[z.id];
       const gainNow = node ? node.currentValue : 0;
-      const isAudible = gainNow > 0.10; // praktische drempel: onder 10% gain visueel als "stil"
+      const isAudible = gainNow > 0.10;
       if (compass) compass.style.opacity = isAudible ? '1' : '0.35';
 
       if (zoneCircles[z.id]) {
@@ -962,10 +911,10 @@
         });
       }
 
-      if (map && currentPos) {
+      if (map && displayedPos) {
         if (isAudible) {
           const latlngs = [
-            [currentPos.latitude, currentPos.longitude],
+            [displayedPos.latitude, displayedPos.longitude],
             [z.lat, z.lon]
           ];
           if (!zoneLines[z.id]) {
@@ -983,7 +932,6 @@
             });
           }
         } else if (zoneLines[z.id]) {
-          // Zone niet meer hoorbaar: lijn weghalen i.p.v. 'm op 0 opacity laten hangen
           map.removeLayer(zoneLines[z.id]);
           delete zoneLines[z.id];
         }
@@ -993,9 +941,6 @@
 
   let wakeLock = null;
 
-  // iOS Safari kan de AudioContext laten suspenden zodra een blokkerende
-  // alert()/confirm()-dialoog verschijnt. Deze helpers hervatten 'm altijd
-  // na het sluiten van de dialoog, ongeacht het antwoord.
   function safeAlert(message) {
     alert(message);
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
@@ -1022,8 +967,6 @@
     }
   }
 
-  // Scherm dimt soms ondanks wake lock zodra de pagina kort naar de achtergrond gaat
-  // (bv. notificatie, app-switch). Bij terugkeer opnieuw aanvragen.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && audioCtx) {
       requestWakeLock();
@@ -1089,9 +1032,7 @@
 
   function onPosition(pos) {
     const raw = pos.coords;
-    // GPS-smoothing: exponentieel gewogen gemiddelde, vergelijkbaar met kompas-smoothing.
-    // Slechte fixes (lage nauwkeurigheid) wegen minder zwaar mee.
-    const weight = Math.min(0.4, 5 / (raw.accuracy || 10)); // betere accuracy = hogere weight
+    const weight = Math.min(0.4, 5 / (raw.accuracy || 10));
     if (!smoothedPos) {
       smoothedPos = { latitude: raw.latitude, longitude: raw.longitude };
     } else {
@@ -1104,8 +1045,10 @@
     els.accValue.textContent = Math.round(raw.accuracy) + ' m';
     els.latValue.textContent = currentPos.latitude.toFixed(6);
     els.lonValue.textContent = currentPos.longitude.toFixed(6);
-    updatePositionMarker(currentPos.latitude, currentPos.longitude);
-    updateAllZones();
+    // Marker en audio worden NIET meer hier bijgewerkt: currentPos is nu alleen
+    // het "doel" waar displayedPos in de rAF-loop continu naartoe interpoleert.
+    // Zo blijft de audio-berekening (en de marker) niet meer hangen op het
+    // GPS-tempo, maar volgt hij 60x/sec de al-gefilterde beweging.
   }
 
   function onPositionError(err) {
@@ -1116,15 +1059,13 @@
     if (watchId === null) startGPS(); else stopGPS();
   });
 
-  // --- Zones ---
-  // Audio-coördinaten: listener staat altijd op (0,0,0). Zones worden bij elke
-  // GPS-update opnieuw berekend als relatieve positie t.o.v. de huidige listener.
-  // Eenvoudiger en robuuster dan een vaste oorsprong met grote absolute waarden.
-
   function updateAllZones() {
-    if (!currentPos) return;
+    // Rekent vanaf displayedPos (60x/sec geïnterpoleerd) i.p.v. currentPos (het
+    // ruwe GPS-doel, dat maar op GPS-tempo verandert). Dit is de kern van de fix:
+    // audio-positie en kaart-positie delen nu dezelfde, continu bewegende bron.
+    if (!displayedPos) return;
+    const pos = displayedPos;
 
-    // Listener altijd op (0,0,0) — zones bewegen relatief
     if (audioCtx && audioListener) {
       if (audioListener.positionX) {
         audioListener.positionX.value = 0;
@@ -1136,14 +1077,13 @@
     }
 
     zones.forEach(z => {
-      const dist = haversine(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
+      const dist = haversine(pos.latitude, pos.longitude, z.lat, z.lon);
       const dist3d = Math.sqrt(dist * dist + (z.height || 0) * (z.height || 0));
-      z.bearingFromUser = bearing(currentPos.latitude, currentPos.longitude, z.lat, z.lon);
+      z.bearingFromUser = bearing(pos.latitude, pos.longitude, z.lat, z.lon);
       z.lastDistance = dist;
 
-      // Zone-positie relatief t.o.v. huidige listener-positie in meters
-      const dLat = (z.lat - currentPos.latitude) * 111320;
-      const dLon = (z.lon - currentPos.longitude) * 111320 * Math.cos(currentPos.latitude * Math.PI / 180);
+      const dLat = (z.lat - pos.latitude) * 111320;
+      const dLon = (z.lon - pos.longitude) * 111320 * Math.cos(pos.latitude * Math.PI / 180);
       const zoneX = dLon;
       const zoneY = z.height || 0;
       const zoneZ = -dLat;
@@ -1159,11 +1099,9 @@
         }
       }
 
-      // Lowpass-cutoff: luchtabsorptie-simulatie
       const cutoffCurve = Math.min(1, dist3d / 80);
       z.cutoffTarget = 8000 - cutoffCurve * 7500;
 
-      // visualGain: benadering van PannerNode-gain voor visuele feedback
       const refDist = refDistanceForVolume(z.volume || 'normal');
       z.visualGain = Math.min(1, refDist / Math.max(dist3d, 0.1));
 
@@ -1261,9 +1199,6 @@
     localStorage.removeItem(STORAGE_KEY);
   }
 
-  // Vertaalt een volume-categorie naar een refDistance in meters (de afstand
-  // waarop de panner de gain op precies 1.0 houdt — dichter = luider dan 1.0,
-  // verder = zachter). Hogere refDistance = geluid draagt verder van nature.
   function refDistanceForVolume(volume) {
     return { soft: 2, normal: 15, loud: 40 }[volume] || 15;
   }
@@ -1328,10 +1263,6 @@
   renderZoneList();
   initMap();
 
-  // Visuele update-loop: draait altijd, ook zonder audio. Zorgt dat kaartrotatie
-  // en kompasnaaldjes direct reageren op het kompas, ongeacht of audio actief is.
-  // startInterpolationLoop() (die bij audio-activatie start) roept updateCompassNeedles
-  // ook aan, maar die dubbele aanroep is onschadelijk — de functie is idempotent.
   (function visualLoop() {
     updateCompassNeedles();
     requestAnimationFrame(visualLoop);
