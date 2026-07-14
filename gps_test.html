@@ -291,6 +291,23 @@
   </div>
 </div>
 
+<div class="panel">
+  <h2>Afstands-afstemming (test)</h2>
+  <div class="sub" style="margin-bottom:10px;">
+    Live afstemmen zonder herladen. <b>refDistance</b> bepaalt hoe dichtbij de steile afval begint: kleiner = sterkere afname vlakbij de bron (realistischer dichtbij, maar gevoeliger voor GPS-drift). <b>Positie-demping</b> bepaalt hoe traag je positie de GPS-fix volgt: lager = trager en stabieler (verdoezelt drift, maar de afstand loopt iets achter). Werkt op alle zones tegelijk; de per-zone categorie (zacht/normaal/luid) schaalt mee.
+  </div>
+  <div class="row" style="align-items:center; margin-bottom:6px;">
+    <span class="pill" style="min-width:112px; text-align:left; background:transparent; color:var(--muted);">refDistance (normaal)</span>
+    <input type="range" id="refDistSlider" min="1" max="20" step="0.5" value="3" style="flex:1;">
+    <span class="pill" id="refDistValue" style="min-width:52px; text-align:center;">3 m</span>
+  </div>
+  <div class="row" style="align-items:center;">
+    <span class="pill" style="min-width:112px; text-align:left; background:transparent; color:var(--muted);">positie-demping</span>
+    <input type="range" id="posSmoothSlider" min="2" max="30" step="1" value="12" style="flex:1;">
+    <span class="pill" id="posSmoothValue" style="min-width:52px; text-align:center;">0.12</span>
+  </div>
+</div>
+
 
 <div class="panel">
   <h2>Nieuwe zone toevoegen</h2>
@@ -346,6 +363,13 @@
   // trager), terwijl de kaart-marker via Leaflet's eigen panTo-animatie wél
   // vloeiend bewoog. Nu delen kaart en geluid dezelfde, continu bewegende bron.
   let displayedPos = null;
+
+  // Live afstembare testparameters (via de sliders in het test-paneel):
+  // refDistNormal = refDistance voor de categorie "normaal"; soft/loud schalen
+  // mee in vaste verhouding. posSmoothingLive = hoe snel displayedPos de GPS-fix
+  // volgt (lager = trager/stabieler, verdoezelt drift).
+  let refDistNormal = 3;
+  let posSmoothingLive = 0.12;
   let audioCtx = null;
   const zoneAudioNodes = {}; // id -> { osc, gain }
   // zoneDom: cache van DOM-referenties per zone, één keer opgezocht bij het
@@ -497,6 +521,10 @@
     compassToggle: document.getElementById('compassToggle'),
     reverbSlider: document.getElementById('reverbSlider'),
     reverbValue: document.getElementById('reverbValue'),
+    refDistSlider: document.getElementById('refDistSlider'),
+    refDistValue: document.getElementById('refDistValue'),
+    posSmoothSlider: document.getElementById('posSmoothSlider'),
+    posSmoothValue: document.getElementById('posSmoothValue'),
     zoneName: document.getElementById('zoneName'),
     zoneLat: document.getElementById('zoneLat'),
     zoneLon: document.getElementById('zoneLon'),
@@ -845,9 +873,8 @@
     if (!displayedPos) {
       displayedPos = { latitude: currentPos.latitude, longitude: currentPos.longitude };
     } else {
-      const posSmoothing = 0.12;
-      displayedPos.latitude += (currentPos.latitude - displayedPos.latitude) * posSmoothing;
-      displayedPos.longitude += (currentPos.longitude - displayedPos.longitude) * posSmoothing;
+      displayedPos.latitude += (currentPos.latitude - displayedPos.latitude) * posSmoothingLive;
+      displayedPos.longitude += (currentPos.longitude - displayedPos.longitude) * posSmoothingLive;
     }
     // Audio-kritisch, dus altijd (elke frame): panner-posities en afstands-
     // afhankelijke waarden (visualGain, cutoffTarget) opnieuw berekenen.
@@ -1046,6 +1073,22 @@
     }
   });
 
+  // refDistance-slider: stelt de "normaal"-refDistance in (soft/loud schalen mee).
+  // updateAllZones() past de panner-refDistance elke frame toe, dus dit werkt
+  // meteen door zonder herladen of opnieuw aanmaken van zones.
+  els.refDistSlider.addEventListener('input', () => {
+    refDistNormal = parseFloat(els.refDistSlider.value);
+    els.refDistValue.textContent = refDistNormal + ' m';
+  });
+
+  // Positie-demping-slider: de getoonde waarde is de smoothing-factor (hoger =
+  // sneller volgen). Slider staat in honderdsten (2..30 -> 0.02..0.30) zodat je
+  // fijn kunt afstemmen tussen "traag en stabiel" en "direct maar drift-gevoelig".
+  els.posSmoothSlider.addEventListener('input', () => {
+    posSmoothingLive = parseInt(els.posSmoothSlider.value, 10) / 100;
+    els.posSmoothValue.textContent = posSmoothingLive.toFixed(2);
+  });
+
   // --- GPS ---
   function startGPS() {
     if (!navigator.geolocation) {
@@ -1132,6 +1175,8 @@
       const zoneY = z.height || 0;
       const zoneZ = -dLat;
 
+      const refDist = refDistanceForVolume(z.volume || 'normal');
+
       const node = zoneAudioNodes[z.id];
       if (node && node.panner) {
         if (node.panner.positionX) {
@@ -1141,12 +1186,14 @@
         } else if (typeof node.panner.setPosition === 'function') {
           node.panner.setPosition(zoneX, zoneY, zoneZ);
         }
+        // refDistance live bijwerken zodat de test-slider direct hoorbaar is,
+        // ook op zones die al vóór het schuiven waren aangemaakt.
+        node.panner.refDistance = refDist;
       }
 
       const cutoffCurve = Math.min(1, dist3d / 80);
       z.cutoffTarget = 8000 - cutoffCurve * 7500;
 
-      const refDist = refDistanceForVolume(z.volume || 'normal');
       z.visualGain = Math.min(1, refDist / Math.max(dist3d, 0.1));
       // updateZoneUI() wordt hier NIET meer aangeroepen: die DOM-write gebeurt
       // nu getrottled (~15fps) in mainLoop(), i.p.v. hier op elke frame (60fps)
@@ -1258,15 +1305,13 @@
 
   function refDistanceForVolume(volume) {
     // refDistance = de afstand waarbinnen de gain ~vol blijft; pas DAARBUITEN
-    // begint de steile inverse-afval. De vorige waarden (2/15/40) zetten die
-    // grens voor "normal" op 15m, waardoor het hele dichtbij-gebied in het VLAKKE
-    // deel van de curve viel en de afname pas ver weg merkbaar werd — vandaar dat
-    // de dichtbij-ervaring plat aanvoelde. Nu bewust minimaal, om de steilste
-    // helling van de inverse-wet vlak bij de bron te leggen en de grens op te
-    // zoeken. Let op: hoe kleiner deze waarde, hoe gevoeliger voor GPS-drift
-    // (je zit dan op de steilste helling, waar een positiesprong hoorbaar
-    // doorwerkt). Dit is de bewuste afweging realisme-dichtbij vs. driftstabiliteit.
-    return { soft: 1, normal: 3, loud: 10 }[volume] || 3;
+    // begint de steile inverse-afval. Nu live afstembaar via refDistNormal (de
+    // slider stelt de "normaal"-waarde in); soft en loud schalen mee in vaste
+    // verhouding (soft = 1/3 van normaal, loud = 3.33x normaal, zoals de
+    // oorspronkelijke 1/3/10-verhouding). Kleiner = sterkere afval vlakbij de
+    // bron (realistischer dichtbij) maar gevoeliger voor GPS-drift.
+    const n = refDistNormal;
+    return { soft: n / 3, normal: n, loud: n * 3.333 }[volume] || n;
   }
 
   function addZone() {
