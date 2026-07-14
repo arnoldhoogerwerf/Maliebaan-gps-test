@@ -781,12 +781,12 @@
 
   function rhythmForIndex(i) {
     const patterns = [
-      { interval: 1.4,  burst: 0.05,  filterFreq: 2200, q: 1.2, toneFreq: 220  },
-      { interval: 1.9,  burst: 0.04,  filterFreq: 3200, q: 1.5, toneFreq: 330  },
-      { interval: 1.1,  burst: 0.06,  filterFreq: 1800, q: 1.0, toneFreq: 165  },
-      { interval: 2.3,  burst: 0.045, filterFreq: 4000, q: 1.8, toneFreq: 440  },
-      { interval: 1.6,  burst: 0.035, filterFreq: 2700, q: 1.3, toneFreq: 277  },
-      { interval: 2.1,  burst: 0.055, filterFreq: 1500, q: 1.1, toneFreq: 185  },
+      { interval: 1.4,  burst: 0.05,  filterFreq: 2200, q: 1.2, toneFreq: 392  },
+      { interval: 1.9,  burst: 0.04,  filterFreq: 3200, q: 1.5, toneFreq: 523  },
+      { interval: 1.1,  burst: 0.06,  filterFreq: 1800, q: 1.0, toneFreq: 330  },
+      { interval: 2.3,  burst: 0.045, filterFreq: 4000, q: 1.8, toneFreq: 659  },
+      { interval: 1.6,  burst: 0.035, filterFreq: 2700, q: 1.3, toneFreq: 466  },
+      { interval: 2.1,  burst: 0.055, filterFreq: 1500, q: 1.1, toneFreq: 349  },
     ];
     return patterns[i % patterns.length];
   }
