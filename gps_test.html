@@ -1257,7 +1257,16 @@
   }
 
   function refDistanceForVolume(volume) {
-    return { soft: 2, normal: 15, loud: 40 }[volume] || 15;
+    // refDistance = de afstand waarbinnen de gain ~vol blijft; pas DAARBUITEN
+    // begint de steile inverse-afval. De vorige waarden (2/15/40) zetten die
+    // grens voor "normal" op 15m, waardoor het hele dichtbij-gebied in het VLAKKE
+    // deel van de curve viel en de afname pas ver weg merkbaar werd — vandaar dat
+    // de dichtbij-ervaring plat aanvoelde. Nu bewust minimaal, om de steilste
+    // helling van de inverse-wet vlak bij de bron te leggen en de grens op te
+    // zoeken. Let op: hoe kleiner deze waarde, hoe gevoeliger voor GPS-drift
+    // (je zit dan op de steilste helling, waar een positiesprong hoorbaar
+    // doorwerkt). Dit is de bewuste afweging realisme-dichtbij vs. driftstabiliteit.
+    return { soft: 1, normal: 3, loud: 10 }[volume] || 3;
   }
 
   function addZone() {
