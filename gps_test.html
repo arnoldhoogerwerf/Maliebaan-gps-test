@@ -206,6 +206,19 @@
     border: 1px solid var(--accent-dim);
     padding: 6px 10px;
   }
+  .testtoggle {
+    font-size: 12px;
+    padding: 8px 10px;
+    background: var(--well);
+    border: 1px solid var(--line);
+    color: var(--muted);
+  }
+  .testtoggle.on {
+    background: var(--accent);
+    color: var(--on-accent);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
   #map-outer {
     height: 280px;
     border-radius: 10px;
@@ -306,6 +319,13 @@
     <input type="range" id="posSmoothSlider" min="2" max="30" step="1" value="12" style="flex:1;">
     <span class="pill" id="posSmoothValue" style="min-width:52px; text-align:center;">0.12</span>
   </div>
+  <div class="sub" style="margin:12px 0 8px 0; color:var(--muted);">Isoleer de meet-mechaniek van de ervaring:</div>
+  <div style="display:flex; flex-wrap:wrap; gap:8px;">
+    <button id="tgDistFilter" class="testtoggle">Afstandsfilter: aan</button>
+    <button id="tgShortTone" class="testtoggle">Toon: lang (ping)</button>
+    <button id="tgToneOnly" class="testtoggle">Alleen toon: uit</button>
+    <button id="tgNoiseOnly" class="testtoggle">Alleen noise: uit</button>
+  </div>
 </div>
 
 
@@ -370,6 +390,13 @@
   // volgt (lager = trager/stabieler, verdoezelt drift).
   let refDistNormal = 3;
   let posSmoothingLive = 0.12;
+
+  // --- Testmodus-vlaggen (schakelbaar via toggles in het test-paneel) ---
+  // Bedoeld om de meet-mechaniek te isoleren van de realistische ervaring.
+  let testDistanceFilterOff = false; // true = afstands-lowpass uit (niets wordt dof op afstand)
+  let testShortTone = false;         // true = sinustoon kort/strak (zelfde curve als burst)
+  let testToneOnly = false;          // true = alleen toon, geen noiseburst
+  let testNoiseOnly = false;         // true = alleen noise, geen toon
   let audioCtx = null;
   const zoneAudioNodes = {}; // id -> { osc, gain }
   // zoneDom: cache van DOM-referenties per zone, één keer opgezocht bij het
@@ -808,30 +835,40 @@
 
     function scheduleBurst() {
       const now = ctx.currentTime;
-      const toneDuration = rhythm.burst * 3;
+      // In testShortTone-modus krijgt de toon dezelfde lengte als de burst, zodat
+      // hij dezelfde momentane afstands-gain "samplet" en niet met een lange staart
+      // over latere posities heen naklinkt (dat liet de toon een andere curve dan
+      // de noise lijken volgen). Normaal (ping) klinkt hij langer na.
+      const toneDuration = testShortTone ? rhythm.burst : rhythm.burst * 3;
 
-      const src = ctx.createBufferSource();
-      src.buffer = getNoiseBuffer(ctx);
-      const burstGain = ctx.createGain();
-      burstGain.gain.setValueAtTime(0, now);
-      burstGain.gain.linearRampToValueAtTime(1, now + 0.005);
-      burstGain.gain.exponentialRampToValueAtTime(0.001, now + rhythm.burst);
-      src.connect(burstGain);
-      burstGain.connect(filter);
-      src.start(now);
-      src.stop(now + rhythm.burst + 0.02);
+      // Noiseburst — overslaan in "alleen toon"-modus
+      if (!testToneOnly) {
+        const src = ctx.createBufferSource();
+        src.buffer = getNoiseBuffer(ctx);
+        const burstGain = ctx.createGain();
+        burstGain.gain.setValueAtTime(0, now);
+        burstGain.gain.linearRampToValueAtTime(1, now + 0.005);
+        burstGain.gain.exponentialRampToValueAtTime(0.001, now + rhythm.burst);
+        src.connect(burstGain);
+        burstGain.connect(filter);
+        src.start(now);
+        src.stop(now + rhythm.burst + 0.02);
+      }
 
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = rhythm.toneFreq;
-      const toneGain = ctx.createGain();
-      toneGain.gain.setValueAtTime(0, now);
-      toneGain.gain.linearRampToValueAtTime(0.35, now + 0.008);
-      toneGain.gain.exponentialRampToValueAtTime(0.001, now + toneDuration);
-      osc.connect(toneGain);
-      toneGain.connect(gainNode);
-      osc.start(now);
-      osc.stop(now + toneDuration + 0.02);
+      // Sinustoon — overslaan in "alleen noise"-modus
+      if (!testNoiseOnly) {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = rhythm.toneFreq;
+        const toneGain = ctx.createGain();
+        toneGain.gain.setValueAtTime(0, now);
+        toneGain.gain.linearRampToValueAtTime(0.35, now + 0.008);
+        toneGain.gain.exponentialRampToValueAtTime(0.001, now + toneDuration);
+        osc.connect(toneGain);
+        toneGain.connect(gainNode);
+        osc.start(now);
+        osc.stop(now + toneDuration + 0.02);
+      }
     }
 
     node.timerId = setInterval(scheduleBurst, rhythm.interval * 1000);
@@ -957,7 +994,10 @@
 
         const node = zoneAudioNodes[z.id];
         const gainNow = node ? node.currentValue : 0;
-        const isAudible = gainNow > 0.10;
+        // Drempel verlaagd van 0.10 naar 0.03: bij een inverse-curve is 10% gain
+        // nog duidelijk hoorbaar, waardoor de pill "stil" toonde terwijl er nog
+        // geluid was. 0.03 ligt dichter bij praktisch onhoorbaar.
+        const isAudible = gainNow > 0.03;
 
         updateZoneUI(z, z.lastDistance != null ? z.lastDistance : null, z.visualGain);
         updateGainMeter(z.id, gainNow);
@@ -1088,6 +1128,41 @@
     posSmoothingLive = parseInt(els.posSmoothSlider.value, 10) / 100;
     els.posSmoothValue.textContent = posSmoothingLive.toFixed(2);
   });
+
+  // --- Testmodus-toggles ---
+  function setupToggle(id, getState, setState, labels) {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    const refresh = () => {
+      const on = getState();
+      btn.textContent = on ? labels.on : labels.off;
+      btn.classList.toggle('on', on);
+    };
+    btn.addEventListener('click', () => { setState(!getState()); refresh(); });
+    refresh();
+  }
+
+  setupToggle('tgDistFilter',
+    () => testDistanceFilterOff,
+    (v) => { testDistanceFilterOff = v; },
+    { on: 'Afstandsfilter: uit', off: 'Afstandsfilter: aan' });
+
+  setupToggle('tgShortTone',
+    () => testShortTone,
+    (v) => { testShortTone = v; },
+    { on: 'Toon: kort (meet)', off: 'Toon: lang (ping)' });
+
+  // Alleen-toon en alleen-noise sluiten elkaar uit: zet je de een aan, dan gaat
+  // de ander uit (anders zou "beide alleen" niets afspelen).
+  setupToggle('tgToneOnly',
+    () => testToneOnly,
+    (v) => { testToneOnly = v; if (v) { testNoiseOnly = false; document.getElementById('tgNoiseOnly').textContent = 'Alleen noise: uit'; document.getElementById('tgNoiseOnly').classList.remove('on'); } },
+    { on: 'Alleen toon: aan', off: 'Alleen toon: uit' });
+
+  setupToggle('tgNoiseOnly',
+    () => testNoiseOnly,
+    (v) => { testNoiseOnly = v; if (v) { testToneOnly = false; document.getElementById('tgToneOnly').textContent = 'Alleen toon: uit'; document.getElementById('tgToneOnly').classList.remove('on'); } },
+    { on: 'Alleen noise: aan', off: 'Alleen noise: uit' });
 
   // --- GPS ---
   function startGPS() {
@@ -1220,12 +1295,21 @@
           node.panner.setPosition(zoneX, zoneY, zoneZ);
         }
         // refDistance live bijwerken zodat de test-slider direct hoorbaar is,
-        // ook op zones die al vóór het schuiven waren aangemaakt.
-        node.panner.refDistance = refDist;
+        // ook op zones die al vóór het schuiven waren aangemaakt. refDistance is
+        // geen AudioParam (kan niet geramp't worden), maar de gain-smoothing in
+        // mainLoop vangt de sprong grotendeels op. We zetten 'm alleen als hij
+        // echt veranderd is, om onnodige herberekening per frame te vermijden.
+        if (node.panner.refDistance !== refDist) {
+          node.panner.refDistance = refDist;
+        }
       }
 
       const cutoffCurve = Math.min(1, dist3d / 80);
-      z.cutoffTarget = 8000 - cutoffCurve * 7500;
+      // In testmodus (afstandsfilter uit) blijft de cutoff volledig open, zodat
+      // afstand ALLEEN via gain hoorbaar is en niets doffer wordt op afstand.
+      // Dat houdt de HRTF-lokalisatie scherp (die leunt op hoge frequenties) en
+      // houdt zones onderling onderscheidbaar tijdens het meten.
+      z.cutoffTarget = testDistanceFilterOff ? 8000 : (8000 - cutoffCurve * 7500);
 
       z.visualGain = Math.min(1, refDist / Math.max(dist3d, 0.1));
       // updateZoneUI() wordt hier NIET meer aangeroepen: die DOM-write gebeurt
@@ -1246,7 +1330,7 @@
         : `${Math.round(dist)} m · ${zone.volume || 'normal'} · h ${zone.height || 0} m`;
     }
     if (pill) {
-      if (gain > 0.10) {
+      if (gain > 0.03) {
         pill.textContent = 'hoorbaar';
         pill.classList.remove('off');
       } else {
