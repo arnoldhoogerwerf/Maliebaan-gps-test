@@ -348,6 +348,11 @@
   let displayedPos = null;
   let audioCtx = null;
   const zoneAudioNodes = {}; // id -> { osc, gain }
+  // zoneDom: cache van DOM-referenties per zone, één keer opgezocht bij het
+  // renderen van de lijst i.p.v. elke animatieframe opnieuw met getElementById
+  // te zoeken. Op middenklasse Android-toestellen is herhaaldelijk DOM-zoeken
+  // relatief duur; dit scheelt met meerdere zones op 60fps merkbaar CPU-tijd.
+  const zoneDom = {};
   let nextZoneId = 1;
 
   // --- Leaflet kaart ---
@@ -579,7 +584,9 @@
   async function startCompass() {
     if (typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
-      // iOS 13+: expliciete toestemming vereist, alleen aan te vragen via gebruikersinteractie
+      // iOS 13+: expliciete toestemming vereist, alleen aan te vragen via gebruikersinteractie.
+      // Op iOS Safari geeft 'deviceorientation' via webkitCompassHeading altijd
+      // een echt kompas t.o.v. magnetisch noorden — geen aparte route nodig.
       try {
         const result = await DeviceOrientationEvent.requestPermission();
         if (result !== 'granted') {
@@ -590,9 +597,27 @@
         safeAlert('Kon geen toestemming vragen voor de richtingssensor: ' + err.message);
         return;
       }
+      window.addEventListener('deviceorientation', handleOrientation, true);
+      compassActive = true;
+      return;
     }
-    window.addEventListener('deviceorientation', handleOrientation, true);
-    compassActive = true;
+
+    // Niet-iOS (o.a. Chrome/Samsung Internet op Android): 'deviceorientation'
+    // levert op recente versies standaard een RELATIEVE hoek (Android's eigen
+    // game-rotation-vector sensor), niet t.o.v. het magnetisch noorden — die
+    // drift dus geleidelijk weg van de werkelijke richting terwijl je loopt.
+    // 'deviceorientationabsolute' geeft wél een hoek t.o.v. het echte noorden
+    // en is op Android de betrouwbare route voor een kompas. Waar beschikbaar
+    // dus die gebruiken; alleen als fallback (oudere/afwijkende browsers)
+    // terugvallen op het gewone event, met een waarschuwing.
+    if ('ondeviceorientationabsolute' in window) {
+      window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+      compassActive = true;
+    } else {
+      window.addEventListener('deviceorientation', handleOrientation, true);
+      compassActive = true;
+      safeAlert('Dit toestel of deze browser ondersteunt geen absoluut kompas. De richting van het geluid kan hierdoor na verloop van tijd licht wegdrijven van het werkelijke noorden.');
+    }
   }
 
   function updateCompassUI() {
@@ -653,8 +678,9 @@
         audioListener.positionY.value = 0;
         audioListener.positionZ.value = 0;
       }
-
-      startInterpolationLoop();
+      // Geen aparte loop meer starten hier: de enige render-loop (mainLoop,
+      // zie onderaan het script) draait al vanaf paginastart en pakt audio-
+      // gerelateerd werk vanzelf op zodra audioCtx bestaat.
     }
     if (audioCtx.state === 'suspended') {
       audioCtx.resume();
@@ -786,73 +812,59 @@
     zoneAudioNodes[zone.id] = node;
   }
 
-  function startInterpolationLoop() {
-    const smoothing = 0.06;
-    function tick() {
-      let activeCount = 0;
-      zones.forEach(z => {
-        const node = zoneAudioNodes[z.id];
-        if (!node) return;
-
-        node.gain.gain.value = 1;
-
-        const visualGain = typeof z.visualGain === 'number' ? z.visualGain : 0;
-        node.currentValue += (visualGain - node.currentValue) * smoothing;
-        if (node.currentValue > 0.01) activeCount++;
-        updateGainMeter(z.id, node.currentValue);
-
-        if (node.distanceFilter && typeof z.cutoffTarget === 'number') {
-          node.currentCutoff += (z.cutoffTarget - node.currentCutoff) * smoothing;
-          node.distanceFilter.frequency.value = node.currentCutoff;
-        }
-
-        if (node.panner) {
-          // Zone-panner-positie wordt NIET meer per frame bijgewerkt: zones staan stil
-          // op hun vaste GPS-coördinaten (in meters, ingesteld bij createZoneAudio),
-          // en de AudioListener beweegt live mee in updateAllZones(). De PannerNode
-          // berekent zelf zowel de richting (voor HRTF) als de afstand (voor de
-          // inverse-gain) vanuit de relatieve positie van listener t.o.v. zone.
-        }
-      });
-      if (masterGain && audioCtx) {
-        const headroom = activeCount <= 2 ? 0.8 : 0.8 * (2 / activeCount);
-        masterGain.gain.setTargetAtTime(Math.max(0.35, headroom), audioCtx.currentTime, 0.3);
-      }
-      updateCompassNeedles();
-      rafId = requestAnimationFrame(tick);
-    }
-    rafId = requestAnimationFrame(tick);
-  }
+  // (De audio-smoothing die hier stond — gain/cutoff-interpolatie per zone en
+  // mastergain-headroom — is verhuisd naar mainLoop() onderaan het script,
+  // samengevoegd met de kompas/kaart-loop die eerst apart draaide. Twee losse
+  // requestAnimationFrame-loops die allebei op 60fps draaiden was de grootste
+  // onnodige batterijlast in de vorige versie: alle DOM-writes, trigonometrie
+  // en kaartberekeningen werden daardoor letterlijk dubbel uitgevoerd zodra
+  // audio actief was.)
 
   function updateGainMeter(id, value) {
-    const fill = document.getElementById('fill-' + id);
-    if (fill) fill.style.width = (value * 100).toFixed(0) + '%';
+    const dom = zoneDom[id];
+    if (dom && dom.fill) dom.fill.style.width = (value * 100).toFixed(0) + '%';
   }
 
   let uiHeading = null;
+  let frameCount = 0;
+  // UI_THROTTLE: DOM-zware visuele updates (teksten, kompasnaaldjes, lijnen op
+  // de kaart, kaartrotatie) hoeven niet 60x/sec — het oog ziet vanaf ~15fps al
+  // geen verschil meer, terwijl elke overgeslagen DOM-write echt CPU en dus
+  // batterij bespaart (vooral merkbaar op minder krachtige Android-toestellen).
+  // Audio-kritische berekeningen (positie-interpolatie, panner, gain/cutoff-
+  // smoothing, listener-oriëntatie) blijven WEL elke frame lopen: vertraging
+  // dáár hoor je wél, ook al zie je 'm niet.
+  const UI_THROTTLE = 4; // 60fps / 4 ≈ 15fps voor zichtbare UI-elementen
 
-  // Interpoleert displayedPos continu (60x/sec) richting currentPos, het meest
-  // recente GPS-doel. smoothing=0.12 convergeert in ~0.3s bij 60fps — snel
-  // genoeg om niet als "traag" te voelen, maar nog steeds vloeiend i.p.v. een
-  // harde sprong bij elke nieuwe GPS-fix. Dit is dezelfde aanpak als bij het
-  // kompas (dat al wel direct aanvoelde): niet wachten op de volgende ruwe
-  // meting, maar continu naar het laatste doel toe bewegen.
+  // Interpoleert displayedPos continu (elke frame) richting currentPos, het
+  // meest recente GPS-doel. smoothing=0.12 convergeert in ~0.3s bij 60fps —
+  // snel genoeg om niet als "traag" te voelen, maar nog steeds vloeiend i.p.v.
+  // een harde sprong bij elke nieuwe GPS-fix.
   function updateDisplayedPosition() {
     if (!currentPos) return;
     if (!displayedPos) {
-      // Eerste fix: geen interpolatie nodig, meteen op de juiste plek starten.
       displayedPos = { latitude: currentPos.latitude, longitude: currentPos.longitude };
     } else {
       const posSmoothing = 0.12;
       displayedPos.latitude += (currentPos.latitude - displayedPos.latitude) * posSmoothing;
       displayedPos.longitude += (currentPos.longitude - displayedPos.longitude) * posSmoothing;
     }
-    updatePositionMarker(displayedPos.latitude, displayedPos.longitude);
+    // Audio-kritisch, dus altijd (elke frame): panner-posities en afstands-
+    // afhankelijke waarden (visualGain, cutoffTarget) opnieuw berekenen.
     updateAllZones();
   }
 
-  function updateCompassNeedles() {
+  // De ENIGE render-loop van de pagina (voorheen waren dit er per ongeluk twee,
+  // zie toelichting hierboven). Draait continu vanaf paginastart, ongeacht of
+  // audio al actief is — GPS/kompas/kaart moeten ook zonder geluid soepel werken.
+  function mainLoop() {
+    frameCount++;
+    const doUIUpdate = (frameCount % UI_THROTTLE === 0);
+
     updateDisplayedPosition();
+
+    // Kompasrichting smoothen: één simpel getal, verwaarloosbare kost, dus
+    // hier gewoon elke frame — geen reden om dit te throttlen.
     if (smoothedHeading !== null) {
       if (uiHeading === null) {
         uiHeading = smoothedHeading;
@@ -861,8 +873,9 @@
         uiHeading = (uiHeading + delta * 0.15 + 360) % 360;
       }
     }
-    updatePositionMarkerHeading();
 
+    // AudioListener-oriëntatie: audio-kritisch, dus elke frame. Als je draait
+    // moet het geluid direct meedraaien, anders hoor je het "hapering".
     if (audioCtx && audioListener && smoothedHeading !== null) {
       const headRad = smoothedHeading * Math.PI / 180;
       const fx = Math.sin(headRad);
@@ -879,64 +892,95 @@
       }
     }
 
+    // Per-zone audio-smoothing (gain- en cutoff-interpolatie): audio-kritisch,
+    // dus elke frame. Dit bepaalt het daadwerkelijk gehoorde volume/klankkleur,
+    // los van de DOM-weergave daarvan (die hieronder wél getrottled wordt).
+    let activeCount = 0;
+    const audioSmoothing = 0.06;
     zones.forEach(z => {
-      const needle = document.getElementById('compass-needle-' + z.id);
-      const elevLabel = document.getElementById('compass-elev-' + z.id);
-      const compass = document.getElementById('compass-' + z.id);
-
-      let bearingDeg = z.bearingFromUser;
-      if (displayedPos && typeof z.lat === 'number') {
-        bearingDeg = bearing(displayedPos.latitude, displayedPos.longitude, z.lat, z.lon);
-      }
-      if (typeof bearingDeg !== 'number') return;
-
-      if (needle && uiHeading !== null) {
-        const relDeg = bearingDeg - uiHeading;
-        needle.setAttribute('transform', `rotate(${relDeg.toFixed(1)})`);
-      }
-      if (elevLabel && z.lastDistance != null) {
-        const hDist = Math.max(z.lastDistance, 1);
-        const elevDeg = Math.atan2(z.height || 0, hDist) * 180 / Math.PI;
-        elevLabel.textContent = (elevDeg >= 0 ? '+' : '') + Math.round(elevDeg) + '°';
-      }
       const node = zoneAudioNodes[z.id];
-      const gainNow = node ? node.currentValue : 0;
-      const isAudible = gainNow > 0.10;
-      if (compass) compass.style.opacity = isAudible ? '1' : '0.35';
-
-      if (zoneCircles[z.id]) {
-        zoneCircles[z.id].setRadius(6);
-        zoneCircles[z.id].setStyle({
-          fillOpacity: isAudible ? 0.9 : 0.3
-        });
-      }
-
-      if (map && displayedPos) {
-        if (isAudible) {
-          const latlngs = [
-            [displayedPos.latitude, displayedPos.longitude],
-            [z.lat, z.lon]
-          ];
-          if (!zoneLines[z.id]) {
-            zoneLines[z.id] = L.polyline(latlngs, {
-              color: '#7fd99a',
-              weight: 1 + gainNow * 2.5,
-              opacity: 0.25 + gainNow * 0.6,
-              dashArray: '4, 6'
-            }).addTo(map);
-          } else {
-            zoneLines[z.id].setLatLngs(latlngs);
-            zoneLines[z.id].setStyle({
-              weight: 1 + gainNow * 2.5,
-              opacity: 0.25 + gainNow * 0.6
-            });
-          }
-        } else if (zoneLines[z.id]) {
-          map.removeLayer(zoneLines[z.id]);
-          delete zoneLines[z.id];
-        }
+      if (!node) return;
+      node.gain.gain.value = 1;
+      const visualGain = typeof z.visualGain === 'number' ? z.visualGain : 0;
+      node.currentValue += (visualGain - node.currentValue) * audioSmoothing;
+      if (node.currentValue > 0.01) activeCount++;
+      if (node.distanceFilter && typeof z.cutoffTarget === 'number') {
+        node.currentCutoff += (z.cutoffTarget - node.currentCutoff) * audioSmoothing;
+        node.distanceFilter.frequency.value = node.currentCutoff;
       }
     });
+    if (masterGain && audioCtx) {
+      const headroom = activeCount <= 2 ? 0.8 : 0.8 * (2 / activeCount);
+      masterGain.gain.setTargetAtTime(Math.max(0.35, headroom), audioCtx.currentTime, 0.3);
+    }
+
+    // --- Alles hieronder is puur visueel/DOM: getrottled naar ~15fps ---
+    if (doUIUpdate) {
+      if (displayedPos) updatePositionMarker(displayedPos.latitude, displayedPos.longitude);
+      updatePositionMarkerHeading();
+
+      zones.forEach(z => {
+        const dom = zoneDom[z.id];
+        if (!dom) return;
+
+        let bearingDeg = z.bearingFromUser;
+        if (displayedPos && typeof z.lat === 'number') {
+          bearingDeg = bearing(displayedPos.latitude, displayedPos.longitude, z.lat, z.lon);
+        }
+
+        const node = zoneAudioNodes[z.id];
+        const gainNow = node ? node.currentValue : 0;
+        const isAudible = gainNow > 0.10;
+
+        updateZoneUI(z, z.lastDistance != null ? z.lastDistance : null, z.visualGain);
+        updateGainMeter(z.id, gainNow);
+
+        if (typeof bearingDeg === 'number') {
+          if (dom.needle && uiHeading !== null) {
+            const relDeg = bearingDeg - uiHeading;
+            dom.needle.setAttribute('transform', `rotate(${relDeg.toFixed(1)})`);
+          }
+          if (dom.elevLabel && z.lastDistance != null) {
+            const hDist = Math.max(z.lastDistance, 1);
+            const elevDeg = Math.atan2(z.height || 0, hDist) * 180 / Math.PI;
+            dom.elevLabel.textContent = (elevDeg >= 0 ? '+' : '') + Math.round(elevDeg) + '°';
+          }
+        }
+        if (dom.compass) dom.compass.style.opacity = isAudible ? '1' : '0.35';
+
+        if (zoneCircles[z.id]) {
+          zoneCircles[z.id].setStyle({ fillOpacity: isAudible ? 0.9 : 0.3 });
+        }
+
+        if (map && displayedPos) {
+          if (isAudible) {
+            const latlngs = [
+              [displayedPos.latitude, displayedPos.longitude],
+              [z.lat, z.lon]
+            ];
+            if (!zoneLines[z.id]) {
+              zoneLines[z.id] = L.polyline(latlngs, {
+                color: '#7fd99a',
+                weight: 1 + gainNow * 2.5,
+                opacity: 0.25 + gainNow * 0.6,
+                dashArray: '4, 6'
+              }).addTo(map);
+            } else {
+              zoneLines[z.id].setLatLngs(latlngs);
+              zoneLines[z.id].setStyle({
+                weight: 1 + gainNow * 2.5,
+                opacity: 0.25 + gainNow * 0.6
+              });
+            }
+          } else if (zoneLines[z.id]) {
+            map.removeLayer(zoneLines[z.id]);
+            delete zoneLines[z.id];
+          }
+        }
+      });
+    }
+
+    rafId = requestAnimationFrame(mainLoop);
   }
 
   let wakeLock = null;
@@ -1104,14 +1148,17 @@
 
       const refDist = refDistanceForVolume(z.volume || 'normal');
       z.visualGain = Math.min(1, refDist / Math.max(dist3d, 0.1));
-
-      updateZoneUI(z, dist, z.visualGain);
+      // updateZoneUI() wordt hier NIET meer aangeroepen: die DOM-write gebeurt
+      // nu getrottled (~15fps) in mainLoop(), i.p.v. hier op elke frame (60fps)
+      // waar dit toch geen enkel zichtbaar verschil maakte.
     });
   }
 
   function updateZoneUI(zone, dist, gain) {
-    const meta = document.getElementById('meta-' + zone.id);
-    const pill = document.getElementById('pill-' + zone.id);
+    const dom = zoneDom[zone.id];
+    if (!dom) return;
+    const meta = dom.meta;
+    const pill = dom.pill;
 
     if (meta) {
       meta.textContent = dist === null
@@ -1159,6 +1206,16 @@
         <button class="remove-btn" data-id="${zone.id}">Verwijderen</button>
       `;
       els.zoneList.appendChild(div);
+      // DOM-referenties nu één keer opzoeken en cachen, i.p.v. dit elke frame
+      // opnieuw te doen in de render-loop.
+      zoneDom[zone.id] = {
+        meta: document.getElementById('meta-' + zone.id),
+        pill: document.getElementById('pill-' + zone.id),
+        needle: document.getElementById('compass-needle-' + zone.id),
+        elevLabel: document.getElementById('compass-elev-' + zone.id),
+        compass: document.getElementById('compass-' + zone.id),
+        fill: document.getElementById('fill-' + zone.id),
+      };
     });
     els.zoneList.querySelectorAll('.remove-btn').forEach(btn => {
       btn.addEventListener('click', () => removeZone(parseInt(btn.dataset.id)));
@@ -1242,6 +1299,7 @@
       delete zoneAudioNodes[id];
     }
     zones.splice(idx, 1);
+    delete zoneDom[id];
     renderZoneList();
     saveZonesToStorage();
     removeZoneCircle(id);
@@ -1263,10 +1321,10 @@
   renderZoneList();
   initMap();
 
-  (function visualLoop() {
-    updateCompassNeedles();
-    requestAnimationFrame(visualLoop);
-  })();
+  // Eén enkele render-loop, gestart bij paginalaad. Werkt GPS/kompas/kaart
+  // altijd bij, en pakt audio-specifieke smoothing vanzelf mee zodra audioCtx
+  // bestaat (zie mainLoop() hierboven).
+  mainLoop();
 })();
 </script>
 
