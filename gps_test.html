@@ -1117,8 +1117,41 @@
     });
   }
 
+  // Maximale plausibele loopsnelheid (m/s). Een mens wandelt ~1,4 m/s; we zetten
+  // de grens ruim daarboven (2,5 m/s ≈ 9 km/u, stevige pas/kort rennen) zodat
+  // echte beweging altijd doorkomt, maar een fysiek onmogelijke GPS-sprong niet.
+  // Dit is outlier-rejectie op de POSITIE, analoog aan het kompas-outlierfilter:
+  // het vangt de grove, plotselinge afwijkende fix die de smoothing zelf niet
+  // netjes kan wegwerken. Smoothing dempt de constante kleine jitter; deze limiet
+  // kapt de grote sprong af. Samen: licht kunnen smoothen én toch stabiel.
+  const MAX_WALK_SPEED = 2.5;
+  let lastFixTime = null;
+
   function onPosition(pos) {
-    const raw = pos.coords;
+    let raw = pos.coords;
+    const now = pos.timestamp || Date.now();
+
+    // Snelheidslimiet: als de ruwe fix een onmogelijk hoge snelheid impliceert
+    // t.o.v. de vorige gesmoothede positie, is het vermoedelijk drift. We
+    // verwerpen 'm niet volledig (dan zou je bij een échte grote sprong nooit
+    // meer bijtrekken), maar begrenzen de verplaatsing tot wat in de verstreken
+    // tijd maximaal beloopbaar was, in de richting van de fix. Zo komt echte
+    // beweging door en wordt alleen het onmogelijke deel afgekapt.
+    if (smoothedPos && lastFixTime !== null) {
+      const dt = Math.max((now - lastFixTime) / 1000, 0.05); // sec, ondergrens tegen /0
+      const moved = haversine(smoothedPos.latitude, smoothedPos.longitude, raw.latitude, raw.longitude);
+      const maxMove = MAX_WALK_SPEED * dt;
+      if (moved > maxMove && moved > 0) {
+        const frac = maxMove / moved;
+        raw = {
+          ...raw,
+          latitude: smoothedPos.latitude + (raw.latitude - smoothedPos.latitude) * frac,
+          longitude: smoothedPos.longitude + (raw.longitude - smoothedPos.longitude) * frac,
+        };
+      }
+    }
+    lastFixTime = now;
+
     const weight = Math.min(0.4, 5 / (raw.accuracy || 10));
     if (!smoothedPos) {
       smoothedPos = { latitude: raw.latitude, longitude: raw.longitude };
