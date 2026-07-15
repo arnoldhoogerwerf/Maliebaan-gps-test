@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>GPS Crossfade Test — Aldus spreekt De Maliebaan</title>
+<title>GPS Ruimtelijk Geluid — Aldus spreekt De Maliebaan</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -206,19 +206,6 @@
     border: 1px solid var(--accent-dim);
     padding: 6px 10px;
   }
-  .testtoggle {
-    font-size: 12px;
-    padding: 8px 10px;
-    background: var(--well);
-    border: 1px solid var(--line);
-    color: var(--muted);
-  }
-  .testtoggle.on {
-    background: var(--accent);
-    color: var(--on-accent);
-    border-color: var(--accent);
-    font-weight: 600;
-  }
   #map-outer {
     height: 280px;
     border-radius: 10px;
@@ -249,10 +236,10 @@
 </head>
 <body>
 
-<h1>GPS Crossfade Test</h1>
+<h1>GPS Ruimtelijk Geluid — basisversie</h1>
 
 <div class="sub">
-  Voer 2–3 zones in bij jou in de buurt, start GPS, en loop rond om te testen of de audio-gain correct in- en uitfadet op basis van afstand. Elke zone krijgt een eigen gegenereerde testtoon zodat je ze uit elkaar kunt horen.
+  Zones plaatsen, GPS starten, rondlopen. Elk geluid staat op zijn eigen coördinaat en wordt hoorbaar in de richting waarin het werkelijk ligt, met een volume dat afneemt volgens de echte inverse-afstandswet. Basis voor de volgende fase: echte field recordings in plaats van dit testsignaal. Afstemming staat vast in de code (zie TUNING bovenaan het script), afgestemd tijdens veldtests.
 </div>
 
 <div class="panel">
@@ -305,31 +292,6 @@
 </div>
 
 <div class="panel">
-  <h2>Afstands-afstemming (test)</h2>
-  <div class="sub" style="margin-bottom:10px;">
-    Live afstemmen zonder herladen. <b>refDistance</b> bepaalt hoe dichtbij de steile afval begint: kleiner = sterkere afname vlakbij de bron (realistischer dichtbij, maar gevoeliger voor GPS-drift). <b>Positie-demping</b> bepaalt hoe traag je positie de GPS-fix volgt: lager = trager en stabieler (verdoezelt drift, maar de afstand loopt iets achter). Werkt op alle zones tegelijk; de per-zone categorie (zacht/normaal/luid) schaalt mee.
-  </div>
-  <div class="row" style="align-items:center; margin-bottom:6px;">
-    <span class="pill" style="min-width:112px; text-align:left; background:transparent; color:var(--muted);">refDistance (normaal)</span>
-    <input type="range" id="refDistSlider" min="1" max="20" step="0.5" value="3" style="flex:1;">
-    <span class="pill" id="refDistValue" style="min-width:52px; text-align:center;">3 m</span>
-  </div>
-  <div class="row" style="align-items:center;">
-    <span class="pill" style="min-width:112px; text-align:left; background:transparent; color:var(--muted);">positie-demping</span>
-    <input type="range" id="posSmoothSlider" min="2" max="30" step="1" value="12" style="flex:1;">
-    <span class="pill" id="posSmoothValue" style="min-width:52px; text-align:center;">0.12</span>
-  </div>
-  <div class="sub" style="margin:12px 0 8px 0; color:var(--muted);">Isoleer de meet-mechaniek van de ervaring:</div>
-  <div style="display:flex; flex-wrap:wrap; gap:8px;">
-    <button id="tgDistFilter" class="testtoggle">Afstandsfilter: aan</button>
-    <button id="tgShortTone" class="testtoggle">Toon: lang (ping)</button>
-    <button id="tgToneOnly" class="testtoggle">Alleen toon: uit</button>
-    <button id="tgNoiseOnly" class="testtoggle">Alleen noise: uit</button>
-  </div>
-</div>
-
-
-<div class="panel">
   <h2>Nieuwe zone toevoegen</h2>
   <div class="row">
     <input type="text" id="zoneName" placeholder="Naam (bv. Voortuin)">
@@ -361,13 +323,15 @@
 </div>
 
 <div class="footnote">
-  Afstandsgedrag: geluiden worden gedempt via de inverse-kwadratenwet (PannerNode distanceModel: inverse), precies zoals in de werkelijkheid. Geen harde radius-grens — geluiden verdwijnen geleidelijk in de ruis. De volume-categorie per zone (zacht/normaal/luid) bepaalt de refDistance: hoe ver het geluid van nature draagt. Elke zone speelt ritmische ruisbursts als testsignaal; in de volgende fase vervangen door echte field recordings.
+  <b>Afstand.</b> Geluiden dempen via de inverse-afstandswet (PannerNode, distanceModel: inverse, rolloffFactor 1) — fysiek correct, geen kunstmatige curve eroverheen. Er is geen harde radius: geluiden verdwijnen geleidelijk in de ruis. De refDistance bepaalt waar de steile afval begint en staat bewust laag (zie TUNING bovenaan in het script), zodat die helling vlak bij de bron ligt, waar hij akoestisch hoort. Hoger zetten maakt het meteen plat: je krijgt dan een groot gebied rond de bron waar niets afneemt. De volume-categorie per zone (zacht/normaal/luid) schaalt hiermee mee.
   <br><br>
-  Ruimtelijke laag (experimenteel): elke zone wordt via een PannerNode (HRTF) geplaatst in de richting waarin hij daadwerkelijk ligt, op basis van de peiling (bearing) tussen jouw GPS-positie en de zone, gecorrigeerd met je kompasrichting. Het volume blijft volledig bepaald door afstand (rolloffFactor = 0); de panner regelt alléén richting, niet sterkte. Kompasdata is van nature ruizig — er zit een sterke demping op (smoothing) om schokkerige richtingswisselingen te voorkomen, maar verwacht geen perfecte precisie. Activeer de richtingssensor pas ná audio, en geef toestemming wanneer iOS daarom vraagt.
+  <b>Richting.</b> Elke zone wordt via een PannerNode (HRTF) geplaatst in de richting waarin hij werkelijk ligt, op basis van de peiling tussen jouw positie en de zone, gecorrigeerd met je kompasrichting. De kompasrichting wordt vrijwel direct gevolgd; alleen evidente sensor-glitches (een fysiek onmogelijke sprong binnen één meting) worden genegeerd. Op iOS via webkitCompassHeading, op Android via deviceorientationabsolute — anders zou de richting daar wegdrijven van het echte noorden. Activeer de richtingssensor pas ná audio.
   <br><br>
-  Reverb (experimenteel, nu op output-niveau): één gedeelde ConvolverNode simuleert de akoestiek van de plek waar JIJ loopt — niet meer per zone gekoppeld aan afstand-tot-bron, maar toegepast op de volledige mix. Dit benadert beter wat reverb feitelijk is: een eigenschap van de ruimte om je heen (open straat versus bijvoorbeeld onder de lindenlaan), niet van elk afzonderlijk geluid. Werkt via een synthetische, procedureel gegenereerde impulse response (schaarse vroege reflecties, snelle decay) — een placeholder voor een toekomstige opname op locatie. De wet/dry-balans is voor nu één instelbare schuif (geen locatiekoppeling), bedoeld om te voelen of dit principe het juiste effect geeft voordat het later gekoppeld wordt aan specifieke omgevingstypes langs de route.
+  <b>Positie.</b> Eén gedeelde, continu geïnterpoleerde positie voedt zowel de kaart als de audio, zodat wat je ziet en wat je hoort niet uiteenlopen. Fixes met slechte nauwkeurigheid wegen lichter mee; daarbovenop staat een lichte smoothing (POSITION_SMOOTHING). Bewust géén snelheidslimiet: die ving de langzame drift niet en kon legitieme beweging blokkeren.
   <br><br>
-  Drie aanpassingen na veldtest: (1) volumecurve is nu logaritmisch i.p.v. kwadratisch — sneller verlies dichtbij het punt, geleidelijker uitvlakkend, dichter bij hoe gehoor zelf werkt. (2) Kompasrichting wordt nu vrijwel direct gevolgd (geen brede demping meer) — alleen evidente sensor-glitches (een fysiek onmogelijke sprong binnen één meting) worden genegeerd, zodat de ruimtelijke audio niet meer achterloopt op de richting waarin je kijkt. (3) Een lowpass-filter per zone dempt geleidelijk de hoge frequenties naarmate je verder van het punt bent (luchtabsorptie-simulatie) — dichtbij klinkt het open en scherp, ver weg dof, als extra psychoakoestische afstandscue naast volume.
+  <b>Kleur en ruimte.</b> Een lowpass per zone dempt de hoge frequenties naarmate je verder weg bent (luchtabsorptie) — dichtbij open en scherp, ver weg dof, als extra afstandscue naast volume. Eén gedeelde ConvolverNode legt daaroverheen de akoestiek van de plek waar jij loopt, op de volledige mix in plaats van per geluid. De impulse response is nu nog synthetisch: placeholder voor een opname op de Maliebaan zelf.
+  <br><br>
+  <b>Testsignaal.</b> Elke zone speelt een ritmische ruisburst (breedbandig, draagt de HRTF-lokalisatie) plus een korte sinustoon met een eigen toonhoogte per zone, zodat je zones uit elkaar kunt houden. Beide gaan door dezelfde panner en volgen dus dezelfde afstandscurve. In de volgende fase vervangen door echte field recordings.
 </div>
 
 <script>
@@ -384,19 +348,28 @@
   // vloeiend bewoog. Nu delen kaart en geluid dezelfde, continu bewegende bron.
   let displayedPos = null;
 
-  // Live afstembare testparameters (via de sliders in het test-paneel):
-  // refDistNormal = refDistance voor de categorie "normaal"; soft/loud schalen
-  // mee in vaste verhouding. posSmoothingLive = hoe snel displayedPos de GPS-fix
-  // volgt (lager = trager/stabieler, verdoezelt drift).
-  let refDistNormal = 3;
-  let posSmoothingLive = 0.12;
+  // ─────────────────────────────────────────────────────────────────────────
+  // TUNING — de twee parameters die er in het veld toe deden. Vastgesteld door
+  // buiten te lopen met live sliders; die sliders zijn er weer uit, de gevonden
+  // waarden staan hier. Dit zijn de enige twee knoppen die je normaal aanraakt.
+  // ─────────────────────────────────────────────────────────────────────────
 
-  // --- Testmodus-vlaggen (schakelbaar via toggles in het test-paneel) ---
-  // Bedoeld om de meet-mechaniek te isoleren van de realistische ervaring.
-  let testDistanceFilterOff = false; // true = afstands-lowpass uit (niets wordt dof op afstand)
-  let testShortTone = false;         // true = sinustoon kort/strak (zelfde curve als burst)
-  let testToneOnly = false;          // true = alleen toon, geen noiseburst
-  let testNoiseOnly = false;         // true = alleen noise, geen toon
+  // REF_DISTANCE_NORMAL: de afstand (m) waarbinnen een "normaal" geluid ~vol
+  // blijft; pas dáárbuiten begint de steile inverse-afval. Klein = de steilste
+  // helling ligt vlak bij de bron, waar hij akoestisch hoort. Veldtest: laag is
+  // duidelijk het realistischst; hoger maakt het meteen plat en onecht, omdat je
+  // dan een groot gebied rond de bron krijgt waar niets afneemt.
+  // soft en loud schalen hiermee mee (zie refDistanceForVolume).
+  const REF_DISTANCE_NORMAL = 1;
+
+  // POSITION_SMOOTHING: hoeveel displayedPos per frame naar de laatste GPS-fix
+  // toe beweegt (0..1). Lager = trager volgen = gladder, maar de afstand loopt
+  // meer achter. Hoger = directer, maar GPS-jitter komt rauwer door.
+  // Veldtest: veel smoothing bleek niet nodig, maar iets is het wel — vandaar
+  // deze lage-maar-niet-nul waarde. Verhoog richting 0.10 als het te traag
+  // aanvoelt bij doorlopen; verlaag richting 0.03 als het te onrustig is.
+  const POSITION_SMOOTHING = 0.05;
+
   let audioCtx = null;
   const zoneAudioNodes = {}; // id -> { osc, gain }
   // zoneDom: cache van DOM-referenties per zone, één keer opgezocht bij het
@@ -548,10 +521,6 @@
     compassToggle: document.getElementById('compassToggle'),
     reverbSlider: document.getElementById('reverbSlider'),
     reverbValue: document.getElementById('reverbValue'),
-    refDistSlider: document.getElementById('refDistSlider'),
-    refDistValue: document.getElementById('refDistValue'),
-    posSmoothSlider: document.getElementById('posSmoothSlider'),
-    posSmoothValue: document.getElementById('posSmoothValue'),
     zoneName: document.getElementById('zoneName'),
     zoneLat: document.getElementById('zoneLat'),
     zoneLon: document.getElementById('zoneLon'),
@@ -835,40 +804,42 @@
 
     function scheduleBurst() {
       const now = ctx.currentTime;
-      // In testShortTone-modus krijgt de toon dezelfde lengte als de burst, zodat
-      // hij dezelfde momentane afstands-gain "samplet" en niet met een lange staart
-      // over latere posities heen naklinkt (dat liet de toon een andere curve dan
-      // de noise lijken volgen). Normaal (ping) klinkt hij langer na.
-      const toneDuration = testShortTone ? rhythm.burst : rhythm.burst * 3;
+      // Toonlengte dicht bij de burstlengte houden. Eerder stond dit op 3x de
+      // burst, waardoor de toon lang naklonk en dus de afstands-gain over een
+      // veel langer tijdvenster "uitsmeerde" dan de korte noiseburst — daardoor
+      // leken toon en noise een verschillende afstandscurve te volgen, terwijl
+      // ze door dezelfde panner gaan. 1.5x geeft de toon net genoeg body om als
+      // toonhoogte herkenbaar te zijn, zonder die uitsmering. Dit telt vooral bij
+      // een kleine REF_DISTANCE_NORMAL, waar je op de steilste helling zit en een
+      // paar decimeter lopen al hoorbaar scheelt.
+      const toneDuration = rhythm.burst * 1.5;
 
-      // Noiseburst — overslaan in "alleen toon"-modus
-      if (!testToneOnly) {
-        const src = ctx.createBufferSource();
-        src.buffer = getNoiseBuffer(ctx);
-        const burstGain = ctx.createGain();
-        burstGain.gain.setValueAtTime(0, now);
-        burstGain.gain.linearRampToValueAtTime(1, now + 0.005);
-        burstGain.gain.exponentialRampToValueAtTime(0.001, now + rhythm.burst);
-        src.connect(burstGain);
-        burstGain.connect(filter);
-        src.start(now);
-        src.stop(now + rhythm.burst + 0.02);
-      }
+      // Noiseburst: breedbandig, korte transiënt — draagt de HRTF-lokalisatie.
+      const src = ctx.createBufferSource();
+      src.buffer = getNoiseBuffer(ctx);
+      const burstGain = ctx.createGain();
+      burstGain.gain.setValueAtTime(0, now);
+      burstGain.gain.linearRampToValueAtTime(1, now + 0.005);
+      burstGain.gain.exponentialRampToValueAtTime(0.001, now + rhythm.burst);
+      src.connect(burstGain);
+      burstGain.connect(filter);
+      src.start(now);
+      src.stop(now + rhythm.burst + 0.02);
 
-      // Sinustoon — overslaan in "alleen noise"-modus
-      if (!testNoiseOnly) {
-        const osc = ctx.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.value = rhythm.toneFreq;
-        const toneGain = ctx.createGain();
-        toneGain.gain.setValueAtTime(0, now);
-        toneGain.gain.linearRampToValueAtTime(0.35, now + 0.008);
-        toneGain.gain.exponentialRampToValueAtTime(0.001, now + toneDuration);
-        osc.connect(toneGain);
-        toneGain.connect(gainNode);
-        osc.start(now);
-        osc.stop(now + toneDuration + 0.02);
-      }
+      // Sinustoon: geeft elke zone een eigen, herkenbare toonhoogte zodat je
+      // zones uit elkaar kunt houden. Gaat rechtstreeks naar gainNode (niet door
+      // de bandpass), maar wél door dezelfde panner — dus zelfde afstandscurve.
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = rhythm.toneFreq;
+      const toneGain = ctx.createGain();
+      toneGain.gain.setValueAtTime(0, now);
+      toneGain.gain.linearRampToValueAtTime(0.35, now + 0.008);
+      toneGain.gain.exponentialRampToValueAtTime(0.001, now + toneDuration);
+      osc.connect(toneGain);
+      toneGain.connect(gainNode);
+      osc.start(now);
+      osc.stop(now + toneDuration + 0.02);
     }
 
     node.timerId = setInterval(scheduleBurst, rhythm.interval * 1000);
@@ -910,8 +881,8 @@
     if (!displayedPos) {
       displayedPos = { latitude: currentPos.latitude, longitude: currentPos.longitude };
     } else {
-      displayedPos.latitude += (currentPos.latitude - displayedPos.latitude) * posSmoothingLive;
-      displayedPos.longitude += (currentPos.longitude - displayedPos.longitude) * posSmoothingLive;
+      displayedPos.latitude += (currentPos.latitude - displayedPos.latitude) * POSITION_SMOOTHING;
+      displayedPos.longitude += (currentPos.longitude - displayedPos.longitude) * POSITION_SMOOTHING;
     }
     // Audio-kritisch, dus altijd (elke frame): panner-posities en afstands-
     // afhankelijke waarden (visualGain, cutoffTarget) opnieuw berekenen.
@@ -1113,57 +1084,6 @@
     }
   });
 
-  // refDistance-slider: stelt de "normaal"-refDistance in (soft/loud schalen mee).
-  // updateAllZones() past de panner-refDistance elke frame toe, dus dit werkt
-  // meteen door zonder herladen of opnieuw aanmaken van zones.
-  els.refDistSlider.addEventListener('input', () => {
-    refDistNormal = parseFloat(els.refDistSlider.value);
-    els.refDistValue.textContent = refDistNormal + ' m';
-  });
-
-  // Positie-demping-slider: de getoonde waarde is de smoothing-factor (hoger =
-  // sneller volgen). Slider staat in honderdsten (2..30 -> 0.02..0.30) zodat je
-  // fijn kunt afstemmen tussen "traag en stabiel" en "direct maar drift-gevoelig".
-  els.posSmoothSlider.addEventListener('input', () => {
-    posSmoothingLive = parseInt(els.posSmoothSlider.value, 10) / 100;
-    els.posSmoothValue.textContent = posSmoothingLive.toFixed(2);
-  });
-
-  // --- Testmodus-toggles ---
-  function setupToggle(id, getState, setState, labels) {
-    const btn = document.getElementById(id);
-    if (!btn) return;
-    const refresh = () => {
-      const on = getState();
-      btn.textContent = on ? labels.on : labels.off;
-      btn.classList.toggle('on', on);
-    };
-    btn.addEventListener('click', () => { setState(!getState()); refresh(); });
-    refresh();
-  }
-
-  setupToggle('tgDistFilter',
-    () => testDistanceFilterOff,
-    (v) => { testDistanceFilterOff = v; },
-    { on: 'Afstandsfilter: uit', off: 'Afstandsfilter: aan' });
-
-  setupToggle('tgShortTone',
-    () => testShortTone,
-    (v) => { testShortTone = v; },
-    { on: 'Toon: kort (meet)', off: 'Toon: lang (ping)' });
-
-  // Alleen-toon en alleen-noise sluiten elkaar uit: zet je de een aan, dan gaat
-  // de ander uit (anders zou "beide alleen" niets afspelen).
-  setupToggle('tgToneOnly',
-    () => testToneOnly,
-    (v) => { testToneOnly = v; if (v) { testNoiseOnly = false; document.getElementById('tgNoiseOnly').textContent = 'Alleen noise: uit'; document.getElementById('tgNoiseOnly').classList.remove('on'); } },
-    { on: 'Alleen toon: aan', off: 'Alleen toon: uit' });
-
-  setupToggle('tgNoiseOnly',
-    () => testNoiseOnly,
-    (v) => { testNoiseOnly = v; if (v) { testToneOnly = false; document.getElementById('tgToneOnly').textContent = 'Alleen toon: uit'; document.getElementById('tgToneOnly').classList.remove('on'); } },
-    { on: 'Alleen noise: aan', off: 'Alleen noise: uit' });
-
   // --- GPS ---
   function startGPS() {
     if (!navigator.geolocation) {
@@ -1192,41 +1112,20 @@
     });
   }
 
-  // Maximale plausibele loopsnelheid (m/s). Een mens wandelt ~1,4 m/s; we zetten
-  // de grens ruim daarboven (2,5 m/s ≈ 9 km/u, stevige pas/kort rennen) zodat
-  // echte beweging altijd doorkomt, maar een fysiek onmogelijke GPS-sprong niet.
-  // Dit is outlier-rejectie op de POSITIE, analoog aan het kompas-outlierfilter:
-  // het vangt de grove, plotselinge afwijkende fix die de smoothing zelf niet
-  // netjes kan wegwerken. Smoothing dempt de constante kleine jitter; deze limiet
-  // kapt de grote sprong af. Samen: licht kunnen smoothen én toch stabiel.
-  const MAX_WALK_SPEED = 2.5;
-  let lastFixTime = null;
-
+  // NB: hier zat een snelheidslimiet (fixes die een onmogelijke loopsnelheid
+  // impliceerden werden afgekapt). Die is er bewust weer uit. Reden: GPS-drift is
+  // meestal geen snelle sprong maar een langzaam wegdrijven en terugkomen, dus
+  // qua snelheid gewoon "beloopbaar" — de limiet zag die drift niet eens. Wat hij
+  // wél deed: legitieme beweging blokkeren wanneer de GPS even niets stuurde en
+  // daarna één grote, kloppende sprong deed. Doordat hij bovendien vanaf de al
+  // vertraagde positie mat, kon hij zichzelf in een achterstand werken waar hij
+  // niet meer uitkwam — de positie leek dan te bevriezen, ook bij vrij zicht op
+  // de hemel. De accuracy-weging hieronder plus POSITION_SMOOTHING pakken de
+  // langzame drift beter aan, zonder dat risico.
   function onPosition(pos) {
-    let raw = pos.coords;
-    const now = pos.timestamp || Date.now();
-
-    // Snelheidslimiet: als de ruwe fix een onmogelijk hoge snelheid impliceert
-    // t.o.v. de vorige gesmoothede positie, is het vermoedelijk drift. We
-    // verwerpen 'm niet volledig (dan zou je bij een échte grote sprong nooit
-    // meer bijtrekken), maar begrenzen de verplaatsing tot wat in de verstreken
-    // tijd maximaal beloopbaar was, in de richting van de fix. Zo komt echte
-    // beweging door en wordt alleen het onmogelijke deel afgekapt.
-    if (smoothedPos && lastFixTime !== null) {
-      const dt = Math.max((now - lastFixTime) / 1000, 0.05); // sec, ondergrens tegen /0
-      const moved = haversine(smoothedPos.latitude, smoothedPos.longitude, raw.latitude, raw.longitude);
-      const maxMove = MAX_WALK_SPEED * dt;
-      if (moved > maxMove && moved > 0) {
-        const frac = maxMove / moved;
-        raw = {
-          ...raw,
-          latitude: smoothedPos.latitude + (raw.latitude - smoothedPos.latitude) * frac,
-          longitude: smoothedPos.longitude + (raw.longitude - smoothedPos.longitude) * frac,
-        };
-      }
-    }
-    lastFixTime = now;
-
+    const raw = pos.coords;
+    // Accuracy-weging: fixes met een slechte nauwkeurigheid wegen lichter mee,
+    // zodat een onzekere meting de positie niet hard wegtrekt.
     const weight = Math.min(0.4, 5 / (raw.accuracy || 10));
     if (!smoothedPos) {
       smoothedPos = { latitude: raw.latitude, longitude: raw.longitude };
@@ -1294,22 +1193,15 @@
         } else if (typeof node.panner.setPosition === 'function') {
           node.panner.setPosition(zoneX, zoneY, zoneZ);
         }
-        // refDistance live bijwerken zodat de test-slider direct hoorbaar is,
-        // ook op zones die al vóór het schuiven waren aangemaakt. refDistance is
-        // geen AudioParam (kan niet geramp't worden), maar de gain-smoothing in
-        // mainLoop vangt de sprong grotendeels op. We zetten 'm alleen als hij
-        // echt veranderd is, om onnodige herberekening per frame te vermijden.
+        // refDistance alleen zetten als hij afwijkt (bv. na het wijzigen van
+        // REF_DISTANCE_NORMAL of de volume-categorie), niet elke frame opnieuw.
         if (node.panner.refDistance !== refDist) {
           node.panner.refDistance = refDist;
         }
       }
 
       const cutoffCurve = Math.min(1, dist3d / 80);
-      // In testmodus (afstandsfilter uit) blijft de cutoff volledig open, zodat
-      // afstand ALLEEN via gain hoorbaar is en niets doffer wordt op afstand.
-      // Dat houdt de HRTF-lokalisatie scherp (die leunt op hoge frequenties) en
-      // houdt zones onderling onderscheidbaar tijdens het meten.
-      z.cutoffTarget = testDistanceFilterOff ? 8000 : (8000 - cutoffCurve * 7500);
+      z.cutoffTarget = 8000 - cutoffCurve * 7500;
 
       z.visualGain = Math.min(1, refDist / Math.max(dist3d, 0.1));
       // updateZoneUI() wordt hier NIET meer aangeroepen: die DOM-write gebeurt
@@ -1420,14 +1312,12 @@
     localStorage.removeItem(STORAGE_KEY);
   }
 
+  // Vertaalt de volume-categorie van een zone naar een refDistance in meters:
+  // de afstand waarbinnen de gain ~vol blijft, waarna de steile inverse-afval
+  // begint. Schaalt mee met REF_DISTANCE_NORMAL (zie TUNING bovenaan): een zacht
+  // geluid draagt van nature minder ver dan een luid.
   function refDistanceForVolume(volume) {
-    // refDistance = de afstand waarbinnen de gain ~vol blijft; pas DAARBUITEN
-    // begint de steile inverse-afval. Nu live afstembaar via refDistNormal (de
-    // slider stelt de "normaal"-waarde in); soft en loud schalen mee in vaste
-    // verhouding (soft = 1/3 van normaal, loud = 3.33x normaal, zoals de
-    // oorspronkelijke 1/3/10-verhouding). Kleiner = sterkere afval vlakbij de
-    // bron (realistischer dichtbij) maar gevoeliger voor GPS-drift.
-    const n = refDistNormal;
+    const n = REF_DISTANCE_NORMAL;
     return { soft: n / 3, normal: n, loud: n * 3.333 }[volume] || n;
   }
 
