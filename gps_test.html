@@ -281,17 +281,6 @@
 </div>
 
 <div class="panel">
-  <h2>Omgevings-reverb</h2>
-  <div class="sub" style="margin-bottom:10px;">
-    Akoestiek van de plek waar jij loopt (bv. open straat vs. onder bomen), toegepast op alles wat klinkt — niet per zone. Voor nu een vaste waarde om mee te testen.
-  </div>
-  <div class="row" style="align-items:center;">
-    <input type="range" id="reverbSlider" min="0" max="100" value="100" style="flex:1;">
-    <span class="pill" id="reverbValue" style="min-width:42px; text-align:center;">100%</span>
-  </div>
-</div>
-
-<div class="panel">
   <h2>Nieuwe zone toevoegen</h2>
   <div class="row">
     <input type="text" id="zoneName" placeholder="Naam (bv. Voortuin)">
@@ -329,12 +318,81 @@
   <br><br>
   <b>Positie.</b> Eén gedeelde, continu geïnterpoleerde positie voedt zowel de kaart als de audio, zodat wat je ziet en wat je hoort niet uiteenlopen. Fixes met slechte nauwkeurigheid wegen lichter mee; daarbovenop staat een lichte smoothing (POSITION_SMOOTHING). Bewust géén snelheidslimiet: die ving de langzame drift niet en kon legitieme beweging blokkeren.
   <br><br>
-  <b>Kleur en ruimte.</b> Een lowpass per zone dempt de hoge frequenties naarmate je verder weg bent (luchtabsorptie) — dichtbij open en scherp, ver weg dof, als extra afstandscue naast volume. Eén gedeelde ConvolverNode legt daaroverheen de akoestiek van de plek waar jij loopt, op de volledige mix in plaats van per geluid. De impulse response is nu nog synthetisch: placeholder voor een opname op de Maliebaan zelf.
+  <b>Kleur en ruimte.</b> Een lowpass per zone dempt de hoge frequenties naarmate je verder weg bent (luchtabsorptie) — dichtbij open en scherp, ver weg dof, als extra afstandscue naast volume. Daarna gaat de hele mix door één gedeelde ConvolverNode: de akoestiek van de plek waar jij loopt, toegepast op alles tegelijk in plaats van per geluid — want akoestiek is een eigenschap van de ruimte om je heen, niet van elk afzonderlijk geluid. Alles gaat er volledig doorheen; de dry/wet-regelaar is eruit omdat volledig wet in het veld het best beviel. De impulse response is synthetisch (schaarse vroege reflecties, snelle decay): placeholder voor een sweep of klap, opgenomen op de Maliebaan zelf.
   <br><br>
   <b>Testsignaal.</b> Elke zone speelt een ritmische ruisburst (breedbandig, draagt de HRTF-lokalisatie) plus een korte sinustoon met een eigen toonhoogte per zone, zodat je zones uit elkaar kunt houden. Beide gaan door dezelfde panner en volgen dus dezelfde afstandscurve. In de volgende fase vervangen door echte field recordings.
 </div>
 
 <script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   HOE DIT HIER KWAM — beslissingen en doodlopende wegen, juli 2026.
+   Bedoeld om te voorkomen dat later (of iemand anders) hetzelfde pad opnieuw
+   loopt. Wat er NIET in zit is net zo belangrijk als wat er wel in zit.
+
+   1. GELUID LIEP ACHTER OP DE KAART.
+      Oorzaak: de audio werd alleen herberekend bij een nieuwe GPS-fix (~1x/sec),
+      terwijl de kaartmarker via Leaflets eigen panTo-animatie vloeiend bewoog.
+      Twee losse smoothing-lagen die uit de pas liepen.
+      Opgelost met displayedPos: één gedeelde, elke frame geïnterpoleerde positie
+      die zowel kaart als audio voedt. Leaflets eigen animatie staat nu uit.
+
+   2. TWEE RENDER-LOOPS DRAAIDEN TEGELIJK.
+      Zodra audio actief was liepen visualLoop en de audio-loop allebei op 60fps
+      en deden allebei hetzelfde DOM-werk: alles dubbel. Samengevoegd tot één
+      mainLoop. DOM-referenties per zone gecacht (zoneDom) i.p.v. elke frame
+      getElementById. Zichtbare UI getrottled naar ~15fps; audio-kritisch werk
+      (positie, panner, listener, gain) blijft elke frame.
+
+   3. KOMPAS DREEF WEG OP ANDROID.
+      'deviceorientation' geeft daar tegenwoordig een RELATIEVE hoek, geen echt
+      kompas. Nu 'deviceorientationabsolute' op niet-iOS; iOS houdt
+      webkitCompassHeading (al absoluut).
+
+   4. AFSTANDSCURVE VOELDE ONECHT — en de eerste diagnose was fout.
+      Er lag een "logaritmische" curve overheen die dichtbij te snel instortte.
+      Weggehaald: de kale inverse-afstandswet (6 dB per afstandsverdubbeling) is
+      al correct. Het échte probleem zat elders: refDistance stond op 15 m,
+      waardoor het hele dichtbij-gebied in het VLAKKE deel van de curve viel en
+      er vlak bij de bron dus niets afnam. Niet de curve-vorm maar de schaal.
+      Nu REF_DISTANCE_NORMAL = 1 (zie TUNING). Veldtest bevestigt: laag = echt,
+      hoger = meteen plat.
+
+   5. SNELHEIDSLIMIET: GEPROBEERD, WEER ERUIT. Niet opnieuw inbouwen.
+      Idee: drift is een onmogelijk snelle sprong, dus filter op loopsnelheid.
+      Werkte niet. GPS-drift is meestal geen sprong maar een langzaam wegdrijven
+      en terugkomen — qua snelheid gewoon beloopbaar, dus de limiet zag het niet
+      eens. Wat hij wél deed: legitieme beweging blokkeren als de GPS even niets
+      stuurde en daarna één grote kloppende sprong deed. En doordat hij vanaf de
+      al vertraagde positie mat, kon hij zichzelf in een achterstand werken waar
+      hij niet meer uitkwam: de positie leek te bevriezen, óók bij vrij zicht op
+      de hemel. Accuracy-weging + POSITION_SMOOTHING doen dit werk beter.
+
+   6. SINUSTOON LEEK EEN ANDERE AFSTANDSCURVE TE VOLGEN DAN DE RUIS.
+      Deed hij niet — ze gaan door dezelfde panner. Maar de toon stond op 3x de
+      burstlengte en klonk zo lang na dat hij de gain over een veel langer venster
+      uitsmeerde dan de korte ruisburst. Merkbaar juist bij lage refDistance, waar
+      een paar decimeter lopen al hoorbaar scheelt. Nu 1.5x: genoeg body om de
+      toonhoogte te horen, geen uitsmering.
+
+   7. "STIL" TERWIJL ER NOG GELUID WAS.
+      Twee oorzaken: de naklinkende toon (zie 6) en een drempel van 0.10, wat bij
+      een inverse-curve nog goed hoorbaar is. Drempel nu 0.03.
+
+   8. TESTSLIDERS EN TOGGLES: GEBRUIKT, DAARNA VERWIJDERD.
+      Er zaten tijdelijk live regelaars in (refDistance, positie-demping) en
+      toggles (afstandsfilter uit, korte toon, alleen-toon/alleen-noise) om buiten
+      lopend de waarden te vinden. Die zijn gevonden en staan nu vast onder TUNING.
+      De dry/wet-regelaar voor de reverb ging om dezelfde reden weg: 100% wet was
+      de enige bruikbare stand.
+
+   OPEN VOOR DE VOLGENDE FASE:
+   - echte field recordings i.p.v. ruisburst + sinustoon;
+   - echte impulse response (sweep/klap op de Maliebaan) i.p.v. de synthetische;
+     let op: de synthetische mist een aparte impuls voor de directe klank op t=0,
+     een echte opname heeft die wél — het geheel zal dus directer klinken;
+   - handmatige hoogte per zone is er al (GPS-hoogte is onbruikbaar), nog te
+     testen met vogels/vleermuizen.
+   ═══════════════════════════════════════════════════════════════════════════ */
 (function() {
   const zones = [];
   let watchId = null;
@@ -519,8 +577,6 @@
     gpsToggle: document.getElementById('gpsToggle'),
     audioToggle: document.getElementById('audioToggle'),
     compassToggle: document.getElementById('compassToggle'),
-    reverbSlider: document.getElementById('reverbSlider'),
-    reverbValue: document.getElementById('reverbValue'),
     zoneName: document.getElementById('zoneName'),
     zoneLat: document.getElementById('zoneLat'),
     zoneLon: document.getElementById('zoneLon'),
@@ -657,9 +713,6 @@
   let rafId = null;
   let audioListener = null;
   let reverbConvolver = null;
-  let masterDry = null;
-  let masterWet = null;
-  let globalWetAmount = 1.0; // instelbare omgevings-reverb, 0 = volledig droog, 1 = volledig nat (standaard: vol wet, o.b.v. veldtest)
 
   function ensureAudioContext() {
     if (!audioCtx) {
@@ -676,25 +729,25 @@
       limiter.connect(audioCtx.destination);
 
       // Mastergain: extra headroom, geschaald naar aantal zones. Alle zones
-      // (droog, zonder eigen reverb) komen hier samen.
+      // komen hier samen, waarna de hele mix door de omgevingsakoestiek gaat.
       masterGain = audioCtx.createGain();
       masterGain.gain.value = 0.8;
 
-      // --- Omgevings-reverb (op de totale output, niet per zone) ---
+      // --- Omgevingsakoestiek (op de totale mix, niet per zone) ---
+      // Simuleert de akoestiek van de plek waar JIJ loopt (open straat versus
+      // onder de lindenlaan), in plaats van een eigenschap van elk afzonderlijk
+      // geluid — dat is wat akoestiek feitelijk is: een eigenschap van de ruimte
+      // om je heen, gedeeld door alles wat erin klinkt.
+      //
+      // Alles gaat er volledig doorheen (100% wet, geen dry/wet-splitsing meer).
+      // Dat is de instelling die in het veld het best beviel; de regelaar die dit
+      // instelbaar maakte is eruit omdat er toch niets anders bruikbaars uitkwam.
       reverbConvolver = audioCtx.createConvolver();
       reverbConvolver.buffer = generateOutdoorImpulseResponse(audioCtx);
       reverbConvolver.normalize = true;
 
-      masterDry = audioCtx.createGain();
-      masterWet = audioCtx.createGain();
-      masterDry.gain.value = 1 - globalWetAmount;
-      masterWet.gain.value = globalWetAmount;
-
-      masterGain.connect(masterDry);
       masterGain.connect(reverbConvolver);
-      reverbConvolver.connect(masterWet);
-      masterDry.connect(limiter);
-      masterWet.connect(limiter);
+      reverbConvolver.connect(limiter);
 
       audioListener = audioCtx.listener;
       if (audioListener.positionX) {
@@ -712,6 +765,18 @@
     return audioCtx;
   }
 
+  // Synthetische impulse response voor een buitenruimte: een paar schaarse,
+  // willekeurig getimede vroege reflecties (eerste ~80 ms) gevolgd door een vrij
+  // snel uitstervende, ruisachtige staart (~0,6 s totaal). Puur procedureel,
+  // geen samples nodig. Dit is de versie die in het veld is getest en goed
+  // bevonden; placeholder tot de echte opname (sweep of klap) op de Maliebaan.
+  //
+  // Bekende eigenschap voor later: deze IR bevat géén aparte impuls voor de
+  // DIRECTE klank op t=0 — hij begint met reflecties en een ruisstaart. Een
+  // echte IR-opname heeft die directe aankomst wél, als eerste piek. Dat maakt
+  // voor de architectuur niets uit (de hele mix gaat er hoe dan ook doorheen),
+  // maar het verklaart wel waarom dit iets diffuser klinkt dan de echte opname
+  // straks zal doen. Niets aan te doen nu; goed om te weten bij het vervangen.
   function generateOutdoorImpulseResponse(ctx) {
     const duration = 0.6;
     const length = Math.floor(ctx.sampleRate * duration);
@@ -719,6 +784,9 @@
 
     for (let channel = 0; channel < 2; channel++) {
       const data = buffer.getChannelData(channel);
+
+      // Vroege reflecties: losse, korte tikken in de eerste ~80 ms, per kanaal
+      // net anders getimed voor wat stereobreedte. Elke volgende zwakker.
       const earlyReflectionCount = 5;
       for (let r = 0; r < earlyReflectionCount; r++) {
         const t = 0.005 + Math.random() * 0.075;
@@ -726,6 +794,9 @@
         const amp = 0.4 * Math.pow(0.6, r);
         if (idx < length) data[idx] += (Math.random() * 2 - 1) * amp;
       }
+
+      // Diffuse staart: exponentieel uitstervende ruis — buiten kaatst het niet
+      // lang na zoals binnen, wel een kort "lucht"-gevoel.
       for (let i = 0; i < length; i++) {
         const t = i / ctx.sampleRate;
         const envelope = Math.exp(-t * 9);
@@ -1071,16 +1142,6 @@
     if (compassActive) {
       els.compassToggle.textContent = 'Richtingssensor actief';
       els.compassToggle.disabled = true;
-    }
-  });
-
-  els.reverbSlider.addEventListener('input', () => {
-    const pct = parseInt(els.reverbSlider.value, 10);
-    globalWetAmount = pct / 100;
-    els.reverbValue.textContent = pct + '%';
-    if (audioCtx && masterDry && masterWet) {
-      masterDry.gain.setTargetAtTime(1 - globalWetAmount, audioCtx.currentTime, 0.1);
-      masterWet.gain.setTargetAtTime(globalWetAmount, audioCtx.currentTime, 0.1);
     }
   });
 
