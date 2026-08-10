@@ -137,6 +137,11 @@
       </div>
 
       <div class="control-group">
+        <label for="thicknessInput"><span>Lijndikte</span> <strong id="thicknessVal">1.8px</strong></label>
+        <input type="range" id="thicknessInput" min="0.5" max="8.0" value="1.8" step="0.1">
+      </div>
+
+      <div class="control-group">
         <label for="exponentInput"><span>Gradiënt Curve</span> <strong id="exponentVal">1.8</strong></label>
         <input type="range" id="exponentInput" min="0.5" max="4.0" value="1.8" step="0.1">
       </div>
@@ -160,6 +165,7 @@
     let config = {
       sourceCount: 3,
       waveSpacing: 22,
+      strokeWidth: 1.8,
       exponent: 1.8,
       animSpeed: 0.2
     };
@@ -180,11 +186,13 @@
     // UI Controls koppelen
     const countInput = document.getElementById('countInput');
     const spacingInput = document.getElementById('spacingInput');
+    const thicknessInput = document.getElementById('thicknessInput');
     const exponentInput = document.getElementById('exponentInput');
     const speedInput = document.getElementById('speedInput');
 
     const countVal = document.getElementById('countVal');
     const spacingVal = document.getElementById('spacingVal');
+    const thicknessVal = document.getElementById('thicknessVal');
     const exponentVal = document.getElementById('exponentVal');
     const speedVal = document.getElementById('speedVal');
 
@@ -200,6 +208,11 @@
     spacingInput.addEventListener('input', (e) => {
       config.waveSpacing = parseFloat(e.target.value);
       spacingVal.innerText = config.waveSpacing + 'px';
+    });
+
+    thicknessInput.addEventListener('input', (e) => {
+      config.strokeWidth = parseFloat(e.target.value);
+      thicknessVal.innerText = config.strokeWidth.toFixed(1) + 'px';
     });
 
     exponentInput.addEventListener('input', (e) => {
@@ -389,7 +402,7 @@
         
         const densityFactor = Math.max(0.4, 1.2 - (config.sourceCount * 0.08));
         const alpha = Math.min(1.0, Math.max(0.02, Math.pow(progressFromSource, config.exponent) * densityFactor)); 
-        const lineWidth = 0.6 + (progressFromSource * 1.8);
+        const lineWidth = config.strokeWidth * (0.3 + (progressFromSource * 0.7));
 
         ctx.strokeStyle = `rgba(${UNIFORM_COLOR.r}, ${UNIFORM_COLOR.g}, ${UNIFORM_COLOR.b}, ${alpha})`;
         ctx.lineWidth = lineWidth;
