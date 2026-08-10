@@ -136,9 +136,9 @@
         userCoords = { lat, lng };
         generateTargetLocations(lat, lng);
       } else {
-        // GPS Smoothing
-        userCoords.lat = userCoords.lat * 0.85 + lat * 0.15;
-        userCoords.lng = userCoords.lng * 0.85 + lng * 0.15;
+        // Direct overnemen zonder trage smoothing voor snelle GPS-responsiviteit:
+        userCoords.lat = lat;
+        userCoords.lng = lng;
       }
 
       calculateTargets();
