@@ -1,42 +1,321 @@
-function renderLoop() {
-  // 1. Smooth Kompas Heading (met correctie voor de 0/360-grens)
-  let diff = rawHeading - smoothedHeading;
-  
-  // Dwing het verschil altijd tussen -180 en +180 graden
-  diff = Math.atan2(Math.sin(diff * Math.PI / 180), Math.cos(diff * Math.PI / 180)) * 180 / Math.PI;
-  
-  smoothedHeading += diff * 0.1; // Smoothing factor
-  
-  // Zorg dat smoothedHeading netjes tussen 0 en 360 blijft
-  smoothedHeading = (smoothedHeading + 360) % 360;
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>3D HRTF Audio + 3-Pijlen Kompas Demo</title>
+  <style>
+    body {
+      background-color: #0d0d0d;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
 
-  if (userCoords && targetLocations.length > 0) {
-    targetLocations.forEach((target, i) => {
-      const arrowEl = document.getElementById(`arrow-${i}`);
-      const labelEl = document.getElementById(`label-${i}`);
+    #status {
+      position: absolute;
+      top: 20px;
+      font-size: 13px;
+      color: #aaa;
+      text-align: center;
+      padding: 0 20px;
+      line-height: 1.4;
+    }
 
-      // Smooth Afstand
-      arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
-      const dist = arrowData[i].currentDist;
+    button {
+      background: #00ffcc;
+      color: #000;
+      border: none;
+      padding: 15px 25px;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 30px;
+      z-index: 10;
+      box-shadow: 0 0 15px rgba(0, 255, 204, 0.4);
+      cursor: pointer;
+    }
 
-      // Schaal Pijllengte
-      const arrowLength = Math.max(20, Math.min(130, (dist / 150) * 130));
+    #compass-container {
+      width: 280px;
+      height: 280px;
+      position: relative;
+      border: 1px dashed #333;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 50px;
+    }
 
-      // 2. Smooth Rotatie van de pijl (ook met 0/360 correctie)
-      const targetAngle = arrowData[i].bearing - smoothedHeading;
-      let angleDiff = targetAngle - arrowData[i].currentAngle;
-      
-      // Dwing de hoek van de pijl ook over de kortste weg
-      angleDiff = Math.atan2(Math.sin(angleDiff * Math.PI / 180), Math.cos(angleDiff * Math.PI / 180)) * 180 / Math.PI;
-      
-      arrowData[i].currentAngle += angleDiff * 0.15;
+    .arrow {
+      position: absolute;
+      width: 6px;
+      border-radius: 3px;
+      transform-origin: bottom center;
+      bottom: 50%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      pointer-events: none;
+    }
 
-      // Pas CSS toe
-      arrowEl.style.height = `${arrowLength}px`;
-      arrowEl.style.transform = `rotate(${arrowData[i].currentAngle}deg)`;
-      labelEl.innerText = `${Math.round(dist)}m`;
+    .arrow-label {
+      position: absolute;
+      top: -20px;
+      font-size: 10px;
+      font-weight: bold;
+      white-space: nowrap;
+      background: rgba(0,0,0,0.7);
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+
+    .arrow::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -5px;
+      width: 0;
+      height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-bottom: 12px solid currentColor;
+    }
+
+    /* Kleuren per doelpunt */
+    #arrow-0 { color: #00ffcc; background: linear-gradient(to top, transparent, #00ffcc); }
+    #arrow-1 { color: #ff0055; background: linear-gradient(to top, transparent, #ff0055); }
+    #arrow-2 { color: #ffcc00; background: linear-gradient(to top, transparent, #ffcc00); }
+  </style>
+</head>
+<body>
+
+  <div id="status">Druk op start om GPS, Kompas & 3D Audio te activeren.</div>
+  <button id="startBtn">Start Ervaring</button>
+
+  <div id="compass-container">
+    <div id="arrow-0" class="arrow" style="height: 0px; display: none;">
+      <span id="label-0" class="arrow-label">0m</span>
+    </div>
+    <div id="arrow-1" class="arrow" style="height: 0px; display: none;">
+      <span id="label-1" class="arrow-label">0m</span>
+    </div>
+    <div id="arrow-2" class="arrow" style="height: 0px; display: none;">
+      <span id="label-2" class="arrow-label">0m</span>
+    </div>
+  </div>
+
+  <script>
+    let userCoords = null;
+    let targetLocations = [];
+    
+    // Web Audio variabelen
+    let audioCtx = null;
+    let audioNodes = []; // Bevat { panner, gain, osc } per target
+
+    // Smoothing & Sensoren
+    let rawHeading = 0;
+    let smoothedHeading = 0;
+    let arrowData = [
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0 },
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0 },
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0 }
+    ];
+
+    const startBtn = document.getElementById('startBtn');
+    const status = document.getElementById('status');
+
+    startBtn.addEventListener('click', async () => {
+      // 1. iOS Kompas Toestemming
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const permission = await DeviceOrientationEvent.requestPermission();
+          if (permission !== 'granted') {
+            status.innerText = "Kompas-toestemming geweigerd.";
+            return;
+          }
+        } catch (e) { console.error(e); }
+      }
+
+      // 2. Web Audio Context & HRTF Panners Initialiseren
+      initAudio();
+
+      // 3. Sensor Event Listeners
+      window.addEventListener('deviceorientation', handleOrientation);
+
+      if ("geolocation" in navigator) {
+        status.innerText = "GPS zoeken...";
+        navigator.geolocation.watchPosition(updatePosition, handleError, {
+          enableHighAccuracy: true,
+          maximumAge: 1000,
+          timeout: 10000
+        });
+      }
+
+      startBtn.style.display = 'none';
+
+      // Start 60fps animatie- en audioloop
+      requestAnimationFrame(renderLoop);
     });
-  }
 
-  requestAnimationFrame(renderLoop);
-}
+    function initAudio() {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      
+      // Drie verschillende frequenties voor de 3 punten (A4, C5, E5 akkoord)
+      const freqs = [440, 523.25, 659.25];
+
+      for (let i = 0; i < 3; i++) {
+        // HRTF Panner
+        const panner = audioCtx.createPanner();
+        panner.panningModel = 'HRTF';
+        panner.distanceModel = 'inverse';
+        panner.refDistance = 10;
+        panner.maxDistance = 150;
+
+        // Volume gain
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime); // Zacht volume
+
+        // Oscillator (Geluidsbron)
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freqs[i], audioCtx.currentTime);
+
+        // Verbinden: Osc -> Gain -> Panner -> Master
+        osc.connect(gain);
+        gain.connect(panner);
+        panner.connect(audioCtx.destination);
+        osc.start();
+
+        audioNodes.push({ panner, gain, osc });
+      }
+    }
+
+    function updatePosition(position) {
+      const lat = position.coords.latitude;
+      const lng = position.coords.longitude;
+
+      if (!userCoords) {
+        userCoords = { lat, lng };
+        generateTargetLocations(lat, lng);
+      } else {
+        // Low-pass filter op GPS om schokken op te vangen
+        userCoords.lat = userCoords.lat * 0.7 + lat * 0.3;
+        userCoords.lng = userCoords.lng * 0.7 + lng * 0.3;
+      }
+
+      calculateTargets();
+    }
+
+    function generateTargetLocations(lat, lng) {
+      targetLocations = [];
+      const distances = [40, 90, 140]; // Punten op 40m, 90m en 140m afstand
+      for (let i = 0; i < 3; i++) {
+        const angle = (i * 120) + (Math.random() * 30);
+        const distanceInMeters = distances[i];
+        
+        const deltaLat = (distanceInMeters / 111111) * Math.cos(angle * Math.PI / 180);
+        const deltaLng = (distanceInMeters / (111111 * Math.cos(lat * Math.PI / 180))) * Math.sin(angle * Math.PI / 180);
+
+        targetLocations.push({ lat: lat + deltaLat, lng: lng + deltaLng });
+      }
+    }
+
+    function calculateTargets() {
+      if (!userCoords || targetLocations.length === 0) return;
+
+      targetLocations.forEach((target, i) => {
+        arrowData[i].targetDist = getDistance(userCoords.lat, userCoords.lng, target.lat, target.lng);
+        arrowData[i].bearing = getBearing(userCoords.lat, userCoords.lng, target.lat, target.lng);
+      });
+    }
+
+    function handleOrientation(event) {
+      if (event.webkitCompassHeading) {
+        rawHeading = event.webkitCompassHeading;
+      } else if (event.alpha !== null) {
+        rawHeading = 360 - event.alpha;
+      }
+    }
+
+    function renderLoop() {
+      // 1. Smooth Kompas Heading (met atan2 fix voor de 0/360 graden grens)
+      let diff = rawHeading - smoothedHeading;
+      diff = Math.atan2(Math.sin(diff * Math.PI / 180), Math.cos(diff * Math.PI / 180)) * 180 / Math.PI;
+      smoothedHeading += diff * 0.1;
+      smoothedHeading = (smoothedHeading + 360) % 360;
+
+      if (userCoords && targetLocations.length > 0) {
+        let statusText = "";
+
+        targetLocations.forEach((target, i) => {
+          const arrowEl = document.getElementById(`arrow-${i}`);
+          const labelEl = document.getElementById(`label-${i}`);
+          arrowEl.style.display = 'flex';
+
+          // 2. Smooth Afstand
+          arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
+          const dist = arrowData[i].currentDist;
+
+          // 3. Schaal Pijllengte (20px tot 130px)
+          const arrowLength = Math.max(20, Math.min(130, (dist / 150) * 130));
+
+          // 4. Smooth Rotatie van de pijl (met atan2 fix)
+          const targetAngle = arrowData[i].bearing - smoothedHeading;
+          let angleDiff = targetAngle - arrowData[i].currentAngle;
+          angleDiff = Math.atan2(Math.sin(angleDiff * Math.PI / 180), Math.cos(angleDiff * Math.PI / 180)) * 180 / Math.PI;
+          arrowData[i].currentAngle += angleDiff * 0.15;
+
+          // Pas Visuele UI toe
+          arrowEl.style.height = `${arrowLength}px`;
+          arrowEl.style.transform = `rotate(${arrowData[i].currentAngle}deg)`;
+          labelEl.innerText = `${Math.round(dist)}m`;
+
+          // 5. Update Web Audio HRTF Posities in 3D-ruimte
+          if (audioNodes[i] && audioCtx) {
+            // Relatieve hoek in radialen voor 3D audio-positionering
+            const relRad = arrowData[i].currentAngle * (Math.PI / 180);
+            
+            // X = Links/Rechts, Z = Voor/Achter (geschaald naar afstand)
+            const x = Math.sin(relRad) * (dist / 10);
+            const z = -Math.cos(relRad) * (dist / 10);
+
+            audioNodes[i].panner.positionX.setValueAtTime(x, audioCtx.currentTime);
+            audioNodes[i].panner.positionZ.setValueAtTime(z, audioCtx.currentTime);
+          }
+
+          statusText += `Pijl ${i+1}: ${Math.round(dist)}m | `;
+        });
+
+        status.innerText = statusText.slice(0, -3);
+      }
+
+      requestAnimationFrame(renderLoop);
+    }
+
+    // Wiskundige functies
+    function getDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371e3; 
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function getBearing(lat1, lon1, lat2, lon2) {
+      const y = Math.sin((lon2 - lon1) * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180);
+      const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
+                Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos((lon2 - lon1) * Math.PI / 180);
+      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    }
+  </script>
+</body>
+</html>
