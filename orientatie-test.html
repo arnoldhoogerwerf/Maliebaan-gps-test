@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas (Gradiënt Omgekeerd)</title>
+  <title>Golffront Kompas (Test Interface)</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -23,17 +23,18 @@
 
     #status {
       position: absolute;
-      top: 25px;
-      font-size: 13px;
+      top: 15px;
+      left: 15px;
+      font-size: 12px;
       color: #aaa;
-      text-align: center;
-      padding: 0 20px;
+      text-align: left;
       line-height: 1.4;
       z-index: 10;
       pointer-events: none;
+      max-width: calc(100% - 180px);
     }
 
-    button {
+    button.start-btn {
       position: absolute;
       background: #00ffcc;
       color: #000;
@@ -42,8 +43,57 @@
       font-size: 16px;
       font-weight: bold;
       border-radius: 30px;
-      z-index: 20;
+      z-index: 30;
       box-shadow: 0 0 20px rgba(0, 255, 204, 0.4);
+      cursor: pointer;
+    }
+
+    /* Test Controls Panel */
+    #controls {
+      position: absolute;
+      top: 15px;
+      right: 15px;
+      background: rgba(20, 20, 20, 0.85);
+      border: 1px solid #333;
+      backdrop-filter: blur(8px);
+      padding: 12px 16px;
+      border-radius: 12px;
+      z-index: 20;
+      width: 200px;
+      font-size: 11px;
+      color: #ddd;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    }
+
+    #controls h3 {
+      margin: 0 0 8px 0;
+      font-size: 12px;
+      color: #00ffcc;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+    }
+
+    .control-group {
+      margin-bottom: 10px;
+    }
+
+    .control-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .control-group label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 3px;
+    }
+
+    .control-group input[type="range"] {
+      width: 100%;
+      accent-color: #00ffcc;
       cursor: pointer;
     }
 
@@ -67,8 +117,29 @@
 </head>
 <body>
 
-  <div id="status">Druk op start om GPS & Kompas te activeren.</div>
-  <button id="startBtn">Start Ervaring</button>
+  <div id="status">Druk op start om te beginnen.</div>
+  <button class="start-btn" id="startBtn">Start Ervaring</button>
+
+  <!-- Controls Panel -->
+  <div id="controls">
+    <h3 id="toggleControls"><span>Parameters</span> <span id="toggleIcon">−</span></h3>
+    <div id="controlsBody">
+      <div class="control-group">
+        <label for="spacingInput"><span>Lijnafstand</span> <strong id="spacingVal">22px</strong></label>
+        <input type="range" id="spacingInput" min="10" max="60" value="22" step="1">
+      </div>
+
+      <div class="control-group">
+        <label for="exponentInput"><span>Gradiënt Curve</span> <strong id="exponentVal">1.8</strong></label>
+        <input type="range" id="exponentInput" min="0.5" max="4.0" value="1.8" step="0.1">
+      </div>
+
+      <div class="control-group">
+        <label for="speedInput"><span>Snelheid</span> <strong id="speedVal">0.20</strong></label>
+        <input type="range" id="speedInput" min="0.0" max="1.0" value="0.2" step="0.02">
+      </div>
+    </div>
+  </div>
 
   <div id="canvas-container">
     <canvas id="compassCanvas" width="400" height="400"></canvas>
@@ -78,11 +149,17 @@
     let userCoords = null;
     let targetLocations = [];
 
+    // Dynamische instellingen (gekoppeld aan sliders)
+    let config = {
+      waveSpacing: 22,
+      exponent: 1.8,
+      animSpeed: 0.2
+    };
+
     // Smoothing & Sensoren
     let rawHeading = 0;
     let smoothedHeading = 0;
     
-    // Basis-kleur (Cyaan/Neon)
     const UNIFORM_COLOR = { r: 0, g: 255, b: 204 };
 
     let arrowData = [
@@ -96,8 +173,43 @@
     const canvas = document.getElementById('compassCanvas');
     const ctx = canvas.getContext('2d');
 
+    // UI Controls koppelen
+    const spacingInput = document.getElementById('spacingInput');
+    const exponentInput = document.getElementById('exponentInput');
+    const speedInput = document.getElementById('speedInput');
+
+    const spacingVal = document.getElementById('spacingVal');
+    const exponentVal = document.getElementById('exponentVal');
+    const speedVal = document.getElementById('speedVal');
+
+    spacingInput.addEventListener('input', (e) => {
+      config.waveSpacing = parseFloat(e.target.value);
+      spacingVal.innerText = config.waveSpacing + 'px';
+    });
+
+    exponentInput.addEventListener('input', (e) => {
+      config.exponent = parseFloat(e.target.value);
+      exponentVal.innerText = config.exponent.toFixed(1);
+    });
+
+    speedInput.addEventListener('input', (e) => {
+      config.animSpeed = parseFloat(e.target.value);
+      speedVal.innerText = config.animSpeed.toFixed(2);
+    });
+
+    // Inklapbaar paneel
+    const toggleControls = document.getElementById('toggleControls');
+    const controlsBody = document.getElementById('controlsBody');
+    const toggleIcon = document.getElementById('toggleIcon');
+    let isOpen = true;
+
+    toggleControls.addEventListener('click', () => {
+      isOpen = !isOpen;
+      controlsBody.style.display = isOpen ? 'block' : 'none';
+      toggleIcon.innerText = isOpen ? '−' : '+';
+    });
+
     startBtn.addEventListener('click', async () => {
-      // 1. iOS Kompas Toestemming
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         try {
           const permission = await DeviceOrientationEvent.requestPermission();
@@ -108,7 +220,6 @@
         } catch (e) { console.error(e); }
       }
 
-      // 2. Sensor Event Listeners
       window.addEventListener('deviceorientation', handleOrientation);
 
       if ("geolocation" in navigator) {
@@ -123,8 +234,6 @@
       }
 
       startBtn.style.display = 'none';
-
-      // Start 60fps animatie loop
       requestAnimationFrame(renderLoop);
     });
 
@@ -136,7 +245,6 @@
         userCoords = { lat, lng };
         generateTargetLocations(lat, lng);
       } else {
-        // Direct overnemen zonder trage smoothing voor snelle GPS-responsiviteit:
         userCoords.lat = lat;
         userCoords.lng = lng;
       }
@@ -148,18 +256,12 @@
       status.innerText = "GPS Fout: " + err.message;
     }
 
-    // DYNAMISCHE GENERATIE: Elke refresh levert een unieke opstelling op!
     function generateTargetLocations(lat, lng) {
       targetLocations = [];
-      
-      // Willekeurige beginhoek voor wisselende windrichtingen
       const baseAngle = Math.random() * 360; 
 
       for (let i = 0; i < 3; i++) {
-        // Spreid de bronnen rondom je locatie met willekeurige variaties
         const angle = baseAngle + (i * 120) + ((Math.random() - 0.5) * 60);
-
-        // Willekeurige afstand per bron tussen 15 meter en 220 meter
         const distanceInMeters = Math.floor(15 + Math.random() * 205);
         
         const deltaLat = (distanceInMeters / 111111) * Math.cos(angle * Math.PI / 180);
@@ -194,46 +296,41 @@
       const center = 200;
       const compassRadius = 195;
 
-      // Clip alles tot het kompas
       ctx.save();
       ctx.beginPath();
       ctx.arc(center, center, compassRadius, 0, Math.PI * 2);
       ctx.clip();
 
-      // Smooth Kompas Heading
       let diff = rawHeading - smoothedHeading;
       diff = Math.atan2(Math.sin(diff * Math.PI / 180), Math.cos(diff * Math.PI / 180)) * 180 / Math.PI;
       smoothedHeading += diff * 0.08;
       smoothedHeading = (smoothedHeading + 360) % 360;
 
-      animStep += 0.2;
+      // Snelheid instelbaar via slider
+      animStep += config.animSpeed;
 
       if (userCoords && targetLocations.length > 0) {
         let statusText = "";
 
         targetLocations.forEach((target, i) => {
-          // Smooth Afstand
           arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
           const dist = arrowData[i].currentDist;
 
-          // Smooth Rotatie met atan2 fix
           const targetAngle = arrowData[i].bearing - smoothedHeading;
           let angleDiff = targetAngle - arrowData[i].currentAngle;
           angleDiff = Math.atan2(Math.sin(angleDiff * Math.PI / 180), Math.cos(angleDiff * Math.PI / 180)) * 180 / Math.PI;
           arrowData[i].currentAngle += angleDiff * 0.1;
 
-          // Teken ronde golfcirkels met omgekeerde helderheidsgradiënt
           drawFullWaveCircles(ctx, arrowData[i].currentAngle, dist, center, compassRadius);
 
-          statusText += `B${i+1}: ${Math.round(dist)}m | `;
+          statusText += `B${i+1}: ${Math.round(dist)}m<br>`;
         });
 
-        status.innerText = statusText.slice(0, -3);
+        status.innerHTML = statusText;
       }
 
       ctx.restore();
 
-      // Buitenrand van het kompas
       ctx.save();
       ctx.strokeStyle = '#333';
       ctx.lineWidth = 3;
@@ -250,23 +347,20 @@
       ctx.translate(center, center);
       ctx.rotate(angleDeg * Math.PI / 180);
 
-      // Positie gebaseerd op de dynamische afstand
       const sourceY = -compassRadius - (distanceMeters * 3.2);
 
-      const waveSpacing = 22; 
+      const waveSpacing = config.waveSpacing; 
       const numWaves = 24;
       const timeOffset = (animStep) % waveSpacing;
 
       for (let r = 0; r < numWaves; r++) {
         const radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset;
 
-        // OMGEKEERDE GRADIËNT:
-        // r = 0 is de buitenste golf (het verste weg van het centrum) -> 100% helder & dikker
-        // r = numWaves is de binnenste golf (dichtst bij het centrum) -> vervaagt (lage alpha)
-        const progress = 1.0 - (r / numWaves); // Nu van 1.0 (buiten) naar 0.0 (binnen)
+        // Omgekeerde gradiënt met dynamische exponent curve
+        const progress = 1.0 - (r / numWaves);
         
-        const alpha = Math.min(1.0, Math.max(0.08, Math.pow(progress, 1.8) * 0.95)); 
-        const lineWidth = 0.8 + (progress * 1.6); // Buitenste lijnen zijn dikker en feller
+        const alpha = Math.min(1.0, Math.max(0.05, Math.pow(progress, config.exponent) * 0.95)); 
+        const lineWidth = 0.8 + (progress * 1.6);
 
         ctx.strokeStyle = `rgba(${UNIFORM_COLOR.r}, ${UNIFORM_COLOR.g}, ${UNIFORM_COLOR.b}, ${alpha})`;
         ctx.lineWidth = lineWidth;
@@ -279,7 +373,6 @@
       ctx.restore();
     }
 
-    // Wiskundige functies
     function getDistance(lat1, lon1, lat2, lon2) {
       const R = 6371e3; 
       const dLat = (lat2 - lat1) * Math.PI / 180;
