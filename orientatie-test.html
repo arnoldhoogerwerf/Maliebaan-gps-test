@@ -82,10 +82,13 @@
     let rawHeading = 0;
     let smoothedHeading = 0;
     
+    // Eén eenduidige kleur voor alle drie de bronnen
+    const UNIFORM_COLOR = '#00ffcc';
+
     let arrowData = [
-      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: '#00ffcc' },
-      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: '#ff0055' },
-      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: '#ffcc00' }
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: UNIFORM_COLOR },
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: UNIFORM_COLOR },
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: UNIFORM_COLOR }
     ];
 
     const startBtn = document.getElementById('startBtn');
@@ -184,19 +187,19 @@
       const center = 200;
       const compassRadius = 195; // Cirkel neemt de volle breedte in
 
-      // Clip alles tot de cirkel van het scherm
+      // Clip alles tot het ronde kompas op het scherm
       ctx.save();
       ctx.beginPath();
       ctx.arc(center, center, compassRadius, 0, Math.PI * 2);
       ctx.clip();
 
-      // 1. Smooth Kompas Heading (atan2 fix voor noordsprong)
+      // 1. Smooth Kompas Heading
       let diff = rawHeading - smoothedHeading;
       diff = Math.atan2(Math.sin(diff * Math.PI / 180), Math.cos(diff * Math.PI / 180)) * 180 / Math.PI;
       smoothedHeading += diff * 0.08;
       smoothedHeading = (smoothedHeading + 360) % 360;
 
-      animStep += 0.2; // Rustige golf-animatie
+      animStep += 0.2; // Rustige animatiesnelheid
 
       if (userCoords && targetLocations.length > 0) {
         let statusText = "";
@@ -212,8 +215,8 @@
           angleDiff = Math.atan2(Math.sin(angleDiff * Math.PI / 180), Math.cos(angleDiff * Math.PI / 180)) * 180 / Math.PI;
           arrowData[i].currentAngle += angleDiff * 0.1;
 
-          // Teken de heldere golffronten
-          drawCurvedWaveFront(ctx, arrowData[i].currentAngle, dist, arrowData[i].color, center, compassRadius);
+          // Teken de volledige ronde golfcirkels
+          drawFullWaveCircles(ctx, arrowData[i].currentAngle, dist, arrowData[i].color, center, compassRadius);
 
           statusText += `B${i+1}: ${Math.round(dist)}m | `;
         });
@@ -235,31 +238,29 @@
       requestAnimationFrame(renderLoop);
     }
 
-    function drawCurvedWaveFront(ctx, angleDeg, distanceMeters, color, center, compassRadius) {
+    function drawFullWaveCircles(ctx, angleDeg, distanceMeters, color, center, compassRadius) {
       ctx.save();
       ctx.translate(center, center);
       ctx.rotate(angleDeg * Math.PI / 180);
 
-      // KROMMING OP BASIS VAN AFSTAND:
-      // Dichtbij: hele kleine virtuele afstand -> hele sterke buiging.
-      // Ver weg: grote virtuele afstand -> flauwe buiging.
+      // Positie van de externe bron
       const sourceY = -compassRadius - (distanceMeters * 3.5);
 
-      // Ruime afstand tussen de lijnen (geen storende Moiré, maar scherpe golffronten)
       const waveSpacing = 22; 
-      const numWaves = 15;
+      const numWaves = 18;
       const timeOffset = (animStep) % waveSpacing;
 
       ctx.strokeStyle = color;
-      ctx.lineWidth = 2.5; 
+      ctx.lineWidth = 2.0; 
 
       for (let r = 0; r < numWaves; r++) {
         const radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset;
 
-        ctx.globalAlpha = Math.max(0.2, 0.85 - (r * 0.04));
+        ctx.globalAlpha = Math.max(0.15, 0.8 - (r * 0.035));
 
         ctx.beginPath();
-        ctx.arc(0, sourceY, radius, Math.PI * 0.38, Math.PI * 0.62, false);
+        // Volledige ronde 360-graden cirkels rondom de virtuele bron
+        ctx.arc(0, sourceY, radius, 0, Math.PI * 2, false);
         ctx.stroke();
       }
 
