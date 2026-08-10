@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>3-Pijlen Kompas Demo</title>
+  <style>
+    body {
+      background-color: #0d0d0d;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    #status {
+      position: absolute;
+      top: 20px;
+      font-size: 14px;
+      color: #aaa;
+      text-align: center;
+      padding: 0 20px;
+    }
+
+    button {
+      background: #00ffcc;
+      color: #000;
+      border: none;
+      padding: 15px 25px;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 30px;
+      z-index: 10;
+      box-shadow: 0 0 15px rgba(0, 255, 204, 0.4);
+    }
+
+    /* Het kompas-rad dat meedraait */
+    #compass-container {
+      width: 300px;
+      height: 300px;
+      position: relative;
+      border: 1px dashed #333;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 40px;
+    }
+
+    /* De Pijlen */
+    .arrow {
+      position: absolute;
+      width: 6px;
+      background: linear-gradient(to top, transparent, #00ffcc);
+      border-radius: 3px;
+      transform-origin: bottom center;
+      bottom: 50%;
+      left: calc(50% - 3px);
+      transition: height 0.3s ease, transform 0.1s linear;
+    }
+
+    /* Pijlpunten */
+    .arrow::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -5px;
+      width: 0;
+      height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-bottom: 12px solid #00ffcc;
+    }
+
+    /* Kleurvariaties per pijl */
+    #arrow-0, #arrow-0::after { background-color: #00ffcc; border-bottom-color: #00ffcc; }
+    #arrow-1, #arrow-1::after { background-color: #ff0055; border-bottom-color: #ff0055; }
+    #arrow-2, #arrow-2::after { background-color: #ffcc00; border-bottom-color: #ffcc00; }
+  </style>
+</head>
+<body>
+
+  <div id="status">Druk op start om de locaties vast te leggen en kompas te starten.</div>
+  <button id="startBtn">Start Kompas & Locaties</button>
+
+  <div id="compass-container">
+    <div id="arrow-0" class="arrow" style="height: 0px; display: none;"></div>
+    <div id="arrow-1" class="arrow" style="height: 0px; display: none;"></div>
+    <div id="arrow-2" class="arrow" style="height: 0px; display: none;"></div>
+  </div>
+
+  <script>
+    let userCoords = null;
+    let targetLocations = [];
+    let currentHeading = 0;
+
+    const startBtn = document.getElementById('startBtn');
+    const status = document.getElementById('status');
+
+    startBtn.addEventListener('click', async () => {
+      // 1. iOS Kompas Toestemming Vragen
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const permission = await DeviceOrientationEvent.requestPermission();
+          if (permission !== 'granted') {
+            status.innerText = "Kompas-toestemming geweigerd.";
+            return;
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      // 2. Start Kompas-listener
+      window.addEventListener('deviceorientation', handleOrientation);
+
+      // 3. Start GPS Tracking
+      if ("geolocation" in navigator) {
+        status.innerText = "GPS zoeken...";
+        navigator.geolocation.watchPosition(updatePosition, handleError, {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 10000
+        });
+      } else {
+        status.innerText = "GPS wordt niet ondersteund door deze browser.";
+      }
+
+      startBtn.style.display = 'none';
+    });
+
+    function updatePosition(position) {
+      userCoords = {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude
+      };
+
+      // Bij de allereerste GPS-fix: maak 3 punten rondom de gebruiker aan
+      if (targetLocations.length === 0) {
+        generateTargetLocations(userCoords.lat, userCoords.lng);
+        status.innerText = "Locaties ingesteld! Draai en wandel om de pijlen te zien reageren.";
+      }
+
+      updateArrows();
+    }
+
+    function handleError(err) {
+      status.innerText = "GPS Fout: " + err.message;
+    }
+
+    // Genereer 3 willekeurige doelen op ~30-80 meter afstand
+    function generateTargetLocations(lat, lng) {
+      targetLocations = [];
+      for (let i = 0; i < 3; i++) {
+        const angle = Math.random() * 360;
+        const distanceInMeters = 30 + Math.random() * 50; // Tussen 30m en 80m
+        
+        // Simpele benadering van offset in coördinaten
+        const deltaLat = (distanceInMeters / 111111) * Math.cos(angle * Math.PI / 180);
+        const deltaLng = (distanceInMeters / (111111 * Math.cos(lat * Math.PI / 180))) * Math.sin(angle * Math.PI / 180);
+
+        targetLocations.push({
+          lat: lat + deltaLat,
+          lng: lng + deltaLng
+        });
+      }
+    }
+
+    function handleOrientation(event) {
+      // iOS gebruikt webkitCompassHeading, Android gebruikt event.alpha
+      if (event.webkitCompassHeading) {
+        currentHeading = event.webkitCompassHeading;
+      } else if (event.alpha !== null) {
+        currentHeading = 360 - event.alpha;
+      }
+      updateArrows();
+    }
+
+    function updateArrows() {
+      if (!userCoords || targetLocations.length === 0) return;
+
+      targetLocations.forEach((target, index) => {
+        const arrowEl = document.getElementById(`arrow-${index}`);
+        arrowEl.style.display = 'block';
+
+        // Bereken Afstand
+        const dist = getDistance(userCoords.lat, userCoords.lng, target.lat, target.lng);
+        
+        // Schaal de pijllengte: 100px bij >= 80 meter, korter naarmate je dichterbij komt (minimaal 15px)
+        const minPx = 15;
+        const maxPx = 120;
+        const maxDist = 80; // meter
+        const arrowLength = Math.max(minPx, Math.min(maxPx, (dist / maxDist) * maxPx));
+
+        // Bereken Richting (Bearing)
+        const bearing = getBearing(userCoords.lat, userCoords.lng, target.lat, target.lng);
+        
+        // Relatieve hoek ten opzichte van waar de telefoon naartoe wijst
+        const relativeAngle = bearing - currentHeading;
+
+        // Pas lengte en rotatie toe op de pijl
+        arrowEl.style.height = `${arrowLength}px`;
+        arrowEl.style.transform = `rotate(${relativeAngle}deg)`;
+      });
+    }
+
+    // Haversine formule voor afstand in meters
+    function getDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371e3; 
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    // Bereken kompasrichting van punt A naar punt B
+    function getBearing(lat1, lon1, lat2, lon2) {
+      const y = Math.sin((lon2 - lon1) * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180);
+      const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
+                Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos((lon2 - lon1) * Math.PI / 180);
+      const brng = Math.atan2(y, x) * 180 / Math.PI;
+      return (brng + 360) % 360;
+    }
+  </script>
+</body>
+</html>
