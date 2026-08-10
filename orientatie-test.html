@@ -2,284 +2,71 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Smoothed 3-Pijlen Kompas Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HRTF + Kompas Demo</title>
   <style>
-    body {
-      background-color: #0d0d0d;
-      color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      margin: 0;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-    }
-
-    #status {
-      position: absolute;
-      top: 20px;
-      font-size: 13px;
-      color: #aaa;
-      text-align: center;
-      padding: 0 20px;
-      line-height: 1.4;
-    }
-
-    button {
-      background: #00ffcc;
-      color: #000;
-      border: none;
-      padding: 15px 25px;
-      font-size: 16px;
-      font-weight: bold;
-      border-radius: 30px;
-      z-index: 10;
-      box-shadow: 0 0 15px rgba(0, 255, 204, 0.4);
-    }
-
-    #compass-container {
-      width: 280px;
-      height: 280px;
-      position: relative;
-      border: 1px dashed #333;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-top: 50px;
-    }
-
-    .arrow-wrapper {
-      position: absolute;
-      width: 100%;
-      height: 100%;
-      top: 0;
-      left: 0;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      pointer-events: none;
-    }
-
-    .arrow {
-      position: absolute;
-      width: 6px;
-      border-radius: 3px;
-      transform-origin: bottom center;
-      bottom: 50%;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    .arrow-label {
-      position: absolute;
-      top: -20px;
-      font-size: 10px;
-      font-weight: bold;
-      white-space: nowrap;
-      background: rgba(0,0,0,0.7);
-      padding: 2px 4px;
-      border-radius: 3px;
-    }
-
-    .arrow::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: -5px;
-      width: 0;
-      height: 0;
-      border-left: 8px solid transparent;
-      border-right: 8px solid transparent;
-      border-bottom: 12px solid currentColor;
-    }
-
-    /* Kleuren */
-    #arrow-0 { color: #00ffcc; background: linear-gradient(to top, transparent, #00ffcc); }
-    #arrow-1 { color: #ff0055; background: linear-gradient(to top, transparent, #ff0055); }
-    #arrow-2 { color: #ffcc00; background: linear-gradient(to top, transparent, #ffcc00); }
+    body { background: #111; color: #fff; font-family: sans-serif; text-align: center; }
+    #compass { width: 150px; height: 150px; border: 2px solid #555; border-radius: 50%; margin: 50px auto; position: relative; }
+    #arrow { width: 4px; height: 60px; background: #00ffcc; position: absolute; top: 15px; left: 73px; transform-origin: bottom center; }
   </style>
 </head>
 <body>
 
-  <div id="status">Druk op start om GPS & Kompas te kalibreren.</div>
-  <button id="startBtn">Start Kompas & Locaties</button>
-
-  <div id="compass-container">
-    <div id="arrow-0" class="arrow" style="height: 0px; display: none;">
-      <span id="label-0" class="arrow-label">0m</span>
-    </div>
-    <div id="arrow-1" class="arrow" style="height: 0px; display: none;">
-      <span id="label-1" class="arrow-label">0m</span>
-    </div>
-    <div id="arrow-2" class="arrow" style="height: 0px; display: none;">
-      <span id="label-2" class="arrow-label">0m</span>
-    </div>
+  <h2>Audio-Kompas Prototype</h2>
+  <button id="startBtn">Start Audio & Kompas</button>
+  
+  <div id="compass">
+    <div id="arrow"></div>
   </div>
 
   <script>
-    let userCoords = null;
-    let targetLocations = [];
-    
-    // Smoothing variabelen
-    let rawHeading = 0;
-    let smoothedHeading = 0;
-    let arrowData = [
-      { currentAngle: 0, targetAngle: 0, currentDist: 0, targetDist: 0 },
-      { currentAngle: 0, targetAngle: 0, currentDist: 0, targetDist: 0 },
-      { currentAngle: 0, targetAngle: 0, currentDist: 0, targetDist: 0 }
-    ];
+    let audioCtx, panner, soundSource;
 
-    const startBtn = document.getElementById('startBtn');
-    const status = document.getElementById('status');
-
-    startBtn.addEventListener('click', async () => {
-      // 1. iOS Kompas Toestemming
-      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        try {
-          const permission = await DeviceOrientationEvent.requestPermission();
-          if (permission !== 'granted') {
-            status.innerText = "Kompas-toestemming geweigerd.";
-            return;
-          }
-        } catch (e) { console.error(e); }
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      // 1. Vraag iOS kompas-toestemming
+      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        await DeviceOrientationEvent.requestPermission();
       }
 
-      // 2. Event Listeners
+      // 2. Start Web Audio Context
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      
+      // Maak HRTF Panner
+      panner = audioCtx.createPanner();
+      panner.panningModel = 'HRTF';
+      panner.distanceModel = 'inverse';
+
+      // Maak een simpele ruis- of toon-bron (geen extern bestand nodig!)
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, audioCtx.currentTime); // A4 toon
+      
+      // Verbinden: Osc -> Panner -> Speakers
+      osc.connect(panner);
+      panner.connect(audioCtx.destination);
+      osc.start();
+
+      // 3. Luister naar kompas/oriëntatie
       window.addEventListener('deviceorientation', handleOrientation);
-
-      if ("geolocation" in navigator) {
-        status.innerText = "GPS zoeken...";
-        navigator.geolocation.watchPosition(updatePosition, handleError, {
-          enableHighAccuracy: true,
-          maximumAge: 1000,
-          timeout: 10000
-        });
-      }
-
-      startBtn.style.display = 'none';
-
-      // Start continue animatie-loop voor buttery smooth rotaties (60fps)
-      requestAnimationFrame(renderLoop);
     });
 
-    function updatePosition(position) {
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
-
-      // Filter extreme GPS sprongen (Low-pass op lat/lng)
-      if (!userCoords) {
-        userCoords = { lat, lng };
-        generateTargetLocations(lat, lng);
-      } else {
-        userCoords.lat = userCoords.lat * 0.7 + lat * 0.3;
-        userCoords.lng = userCoords.lng * 0.7 + lng * 0.3;
-      }
-
-      calculateTargets();
-    }
-
-    function generateTargetLocations(lat, lng) {
-      targetLocations = [];
-      // Genereren van 3 punten op grotere afstanden (bijv. 50, 100, 150 meter) voor beter zichtbaar effect
-      const distances = [40, 90, 140]; 
-      for (let i = 0; i < 3; i++) {
-        const angle = (i * 120) + (Math.random() * 30); // Netjes verspreid rondom
-        const distanceInMeters = distances[i];
-        
-        const deltaLat = (distanceInMeters / 111111) * Math.cos(angle * Math.PI / 180);
-        const deltaLng = (distanceInMeters / (111111 * Math.cos(lat * Math.PI / 180))) * Math.sin(angle * Math.PI / 180);
-
-        targetLocations.push({ lat: lat + deltaLat, lng: lng + deltaLng });
-      }
-    }
-
-    function calculateTargets() {
-      if (!userCoords || targetLocations.length === 0) return;
-
-      targetLocations.forEach((target, i) => {
-        const dist = getDistance(userCoords.lat, userCoords.lng, target.lat, target.lng);
-        const bearing = getBearing(userCoords.lat, userCoords.lng, target.lat, target.lng);
-        
-        arrowData[i].targetDist = dist;
-        arrowData[i].bearing = bearing;
-      });
-    }
-
     function handleOrientation(event) {
-      if (event.webkitCompassHeading) {
-        rawHeading = event.webkitCompassHeading;
-      } else if (event.alpha !== null) {
-        rawHeading = 360 - event.alpha;
+      // Haal kompasrichting op (iOS gebruikt webkitCompassHeading)
+      let heading = event.webkitCompassHeading || (360 - event.alpha);
+      
+      // Update Visuele Pijl
+      document.getElementById('arrow').style.transform = `rotate(${heading}deg)`;
+
+      // Update HRTF Audio Positie (bereken x en z op een cirkel)
+      if (panner && audioCtx) {
+        let radians = heading * (Math.PI / 180);
+        let x = Math.sin(radians);
+        let z = -Math.cos(radians);
+        
+        // Zet de virtuele geluidsbron op positie (x, 0, z) rondom het hoofd
+        panner.positionX.setValueAtTime(x, audioCtx.currentTime);
+        panner.positionZ.setValueAtTime(z, audioCtx.currentTime);
       }
-    }
-
-    // Render-loop die alle bewegingen (rotatie + lengte) soepel maakt
-    function renderLoop() {
-      // 1. Smooth Kompas Heading (Lerp)
-      let diff = rawHeading - smoothedHeading;
-      // Zorg voor de kortste draai bij de 0/360 graden grens
-      if (diff > 180) diff -= 360;
-      if (diff < -180) diff += 360;
-      smoothedHeading += diff * 0.1; // 0.1 is de smoothing-factor (lagere waarde = rustiger)
-
-      if (userCoords && targetLocations.length > 0) {
-        let statusText = "";
-
-        targetLocations.forEach((target, i) => {
-          const arrowEl = document.getElementById(`arrow-${i}`);
-          const labelEl = document.getElementById(`label-${i}`);
-          arrowEl.style.display = 'flex';
-
-          // 2. Smooth Afstand
-          arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
-          const dist = arrowData[i].currentDist;
-
-          // 3. Schaal Pijllengte (0 tot 150 meter schaal)
-          // Dichterbij = korter. Maximaal 130px, minimaal 20px.
-          const maxDist = 150;
-          const arrowLength = Math.max(20, Math.min(130, (dist / maxDist) * 130));
-
-          // 4. Smooth Rotatie van de pijl
-          const targetAngle = arrowData[i].bearing - smoothedHeading;
-          let angleDiff = targetAngle - arrowData[i].currentAngle;
-          if (angleDiff > 180) angleDiff -= 360;
-          if (angleDiff < -180) angleDiff += 360;
-          arrowData[i].currentAngle += angleDiff * 0.15;
-
-          // Pas UI toe
-          arrowEl.style.height = `${arrowLength}px`;
-          arrowEl.style.transform = `rotate(${arrowData[i].currentAngle}deg)`;
-          labelEl.innerText = `${Math.round(dist)}m`;
-
-          statusText += `Pijl ${i+1}: ${Math.round(dist)}m | `;
-        });
-
-        status.innerText = statusText.slice(0, -3);
-      }
-
-      requestAnimationFrame(renderLoop);
-    }
-
-    function getDistance(lat1, lon1, lat2, lon2) {
-      const R = 6371e3; 
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLon = (lon2 - lon1) * Math.PI / 180;
-      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2);
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    }
-
-    function getBearing(lat1, lon1, lat2, lon2) {
-      const y = Math.sin((lon2 - lon1) * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180);
-      const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
-                Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos((lon2 - lon1) * Math.PI / 180);
-      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
     }
   </script>
 </body>
