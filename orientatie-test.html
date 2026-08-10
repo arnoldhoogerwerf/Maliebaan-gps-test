@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas (Gradiënt & Afstand)</title>
+  <title>Golffront Kompas (Gradiënt Omgekeerd)</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -222,7 +222,7 @@
           angleDiff = Math.atan2(Math.sin(angleDiff * Math.PI / 180), Math.cos(angleDiff * Math.PI / 180)) * 180 / Math.PI;
           arrowData[i].currentAngle += angleDiff * 0.1;
 
-          // Teken ronde golfcirkels met helderheidsgradiënt naar afstand
+          // Teken ronde golfcirkels met omgekeerde helderheidsgradiënt
           drawFullWaveCircles(ctx, arrowData[i].currentAngle, dist, center, compassRadius);
 
           statusText += `B${i+1}: ${Math.round(dist)}m | `;
@@ -260,15 +260,13 @@
       for (let r = 0; r < numWaves; r++) {
         const radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset;
 
-        // GRADIËNT GRONDBINSDING:
-        // Naarmate r groter wordt (golf reist verder af van de bron / komt dieper op de kaart),
-        // verhogen of verlagen we de transparantie en streekdikte.
-        // r = 0 is het verst van het centrum (minder helder) -> r = numWaves is het dichtst bij (volledig helder)
-        const progress = r / numWaves; // Verloop van 0.0 naar 1.0
+        // OMGEKEERDE GRADIËNT:
+        // r = 0 is de buitenste golf (het verste weg van het centrum) -> 100% helder & dikker
+        // r = numWaves is de binnenste golf (dichtst bij het centrum) -> vervaagt (lage alpha)
+        const progress = 1.0 - (r / numWaves); // Nu van 1.0 (buiten) naar 0.0 (binnen)
         
-        // Kwadratisch verloop voor een natuurlijk visueel effect (fade-in)
         const alpha = Math.min(1.0, Math.max(0.08, Math.pow(progress, 1.8) * 0.95)); 
-        const lineWidth = 0.8 + (progress * 1.6); // Dikkere lijnen dichtbij
+        const lineWidth = 0.8 + (progress * 1.6); // Buitenste lijnen zijn dikker en feller
 
         ctx.strokeStyle = `rgba(${UNIFORM_COLOR.r}, ${UNIFORM_COLOR.g}, ${UNIFORM_COLOR.b}, ${alpha})`;
         ctx.lineWidth = lineWidth;
