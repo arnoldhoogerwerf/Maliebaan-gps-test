@@ -3,58 +3,65 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Full-Screen Moiré Interferentiemeter</title>
+  <title>Golffront Kompas</title>
   <style>
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
     body, html {
-      background-color: #050505;
+      background-color: #0d0d0d;
       color: #fff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       margin: 0;
       padding: 0;
       width: 100%;
       height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       overflow: hidden;
     }
 
     #status {
       position: absolute;
-      top: 20px;
-      left: 0;
-      width: 100%;
+      top: 25px;
       font-size: 13px;
-      color: #ccc;
+      color: #aaa;
       text-align: center;
       padding: 0 20px;
       line-height: 1.4;
       z-index: 10;
       pointer-events: none;
-      text-shadow: 0 0 4px rgba(0,0,0,0.8);
     }
 
     button {
       position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
       background: #00ffcc;
       color: #000;
       border: none;
-      padding: 18px 32px;
-      font-size: 18px;
+      padding: 16px 30px;
+      font-size: 16px;
       font-weight: bold;
-      border-radius: 40px;
+      border-radius: 30px;
       z-index: 20;
-      box-shadow: 0 0 20px rgba(0, 255, 204, 0.5);
+      box-shadow: 0 0 20px rgba(0, 255, 204, 0.4);
       cursor: pointer;
     }
 
-    canvas {
-      display: block;
+    #canvas-container {
+      position: relative;
       width: 100vw;
-      height: 100vh;
+      height: 100vw;
+      max-width: 500px;
+      max-height: 500px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
     }
   </style>
 </head>
@@ -63,7 +70,9 @@
   <div id="status">Druk op start om GPS & Kompas te activeren.</div>
   <button id="startBtn">Start Ervaring</button>
 
-  <canvas id="compassCanvas"></canvas>
+  <div id="canvas-container">
+    <canvas id="compassCanvas" width="400" height="400"></canvas>
+  </div>
 
   <script>
     let userCoords = null;
@@ -73,7 +82,6 @@
     let rawHeading = 0;
     let smoothedHeading = 0;
     
-    // Heldere, opvallende kleuren voor maximale Moiré-interferentie
     let arrowData = [
       { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: '#00ffcc' },
       { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: '#ff0055' },
@@ -84,22 +92,6 @@
     const status = document.getElementById('status');
     const canvas = document.getElementById('compassCanvas');
     const ctx = canvas.getContext('2d');
-
-    let width, height, centerX, centerY, maxRadius;
-
-    function resizeCanvas() {
-      width = window.innerWidth;
-      height = window.innerHeight;
-      canvas.width = width;
-      canvas.height = height;
-      centerX = width / 2;
-      centerY = height / 2;
-      // Diagonale straal om het hele scherm ruim te bedekken
-      maxRadius = Math.sqrt(centerX * centerX + centerY * centerY);
-    }
-
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
 
     startBtn.addEventListener('click', async () => {
       // 1. iOS Kompas Toestemming
@@ -141,9 +133,9 @@
         userCoords = { lat, lng };
         generateTargetLocations(lat, lng);
       } else {
-        // Sterke low-pass filter op GPS tegen positie-jitter
-        userCoords.lat = userCoords.lat * 0.8 + lat * 0.2;
-        userCoords.lng = userCoords.lng * 0.8 + lng * 0.2;
+        // GPS Smoothing tegen springen
+        userCoords.lat = userCoords.lat * 0.85 + lat * 0.15;
+        userCoords.lng = userCoords.lng * 0.85 + lng * 0.15;
       }
 
       calculateTargets();
@@ -155,7 +147,7 @@
 
     function generateTargetLocations(lat, lng) {
       targetLocations = [];
-      const distances = [40, 90, 150]; // Bronnen op 40m, 90m en 150m afstand
+      const distances = [20, 80, 180]; // Dichtbij (20m), Gemiddeld (80m), Ver (180m)
       for (let i = 0; i < 3; i++) {
         const angle = (i * 120) + (Math.random() * 30);
         const distanceInMeters = distances[i];
@@ -184,88 +176,91 @@
       }
     }
 
-    let waveAnimTime = 0;
+    let animStep = 0;
 
     function renderLoop() {
-      // Clear Scherm
-      ctx.clearRect(0, 0, width, height);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // 1. Extra sterke Kompas Smoothing tegen trillingen
+      const center = 200;
+      const compassRadius = 195; // Cirkel neemt de volle breedte in
+
+      // Clip alles tot de cirkel van het scherm
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(center, center, compassRadius, 0, Math.PI * 2);
+      ctx.clip();
+
+      // 1. Smooth Kompas Heading (atan2 fix voor noordsprong)
       let diff = rawHeading - smoothedHeading;
       diff = Math.atan2(Math.sin(diff * Math.PI / 180), Math.cos(diff * Math.PI / 180)) * 180 / Math.PI;
-      smoothedHeading += diff * 0.05; // Rustigere lerp
+      smoothedHeading += diff * 0.08;
       smoothedHeading = (smoothedHeading + 360) % 360;
 
-      // Rustige constante animatiesnelheid voor de golf-rimpeling
-      waveAnimTime += 0.15;
+      animStep += 0.2; // Rustige golf-animatie
 
       if (userCoords && targetLocations.length > 0) {
         let statusText = "";
 
         targetLocations.forEach((target, i) => {
           // Smooth Afstand
-          arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.03;
+          arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
           const dist = arrowData[i].currentDist;
 
-          // Smooth Rotatie van de bron
+          // Smooth Rotatie met atan2 fix
           const targetAngle = arrowData[i].bearing - smoothedHeading;
           let angleDiff = targetAngle - arrowData[i].currentAngle;
           angleDiff = Math.atan2(Math.sin(angleDiff * Math.PI / 180), Math.cos(angleDiff * Math.PI / 180)) * 180 / Math.PI;
-          arrowData[i].currentAngle += angleDiff * 0.08; // Rustigere rotatie-lerp
+          arrowData[i].currentAngle += angleDiff * 0.1;
 
-          // Teken de scherpe schermvullende Moiré-golffronten
-          drawFullScreenWaveFront(ctx, arrowData[i].currentAngle, dist, arrowData[i].color, i);
+          // Teken de heldere golffronten
+          drawCurvedWaveFront(ctx, arrowData[i].currentAngle, dist, arrowData[i].color, center, compassRadius);
 
-          statusText += `Bron ${i+1}: ${Math.round(dist)}m | `;
+          statusText += `B${i+1}: ${Math.round(dist)}m | `;
         });
 
         status.innerText = statusText.slice(0, -3);
       }
 
+      ctx.restore(); // Herstel clip
+
+      // Buitenrand van de kompas-cirkel
+      ctx.save();
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(center, center, compassRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
       requestAnimationFrame(renderLoop);
     }
 
-    function drawFullScreenWaveFront(ctx, angleDeg, distanceMeters, color, index) {
+    function drawCurvedWaveFront(ctx, angleDeg, distanceMeters, color, center, compassRadius) {
       ctx.save();
-      
-      // Verplaats de oorsprong naar het exacte midden van het scherm
-      ctx.translate(centerX, centerY);
+      ctx.translate(center, center);
       ctx.rotate(angleDeg * Math.PI / 180);
-      
-      // Bron staat ver buiten het scherm gepositioneerd
-      const sourceY = -(maxRadius + 150 + (distanceMeters * 1.5));
 
-      // Dichtheid van de lijnen (waveSpacing)
-      // Dichterbij = fijnmaziger Moiré-patroon
-      const minSpacing = 2.8; 
-      const maxSpacing = 8.0;
-      const waveSpacing = Math.max(minSpacing, Math.min(maxSpacing, (distanceMeters / 150) * maxSpacing));
+      // KROMMING OP BASIS VAN AFSTAND:
+      // Dichtbij: hele kleine virtuele afstand -> hele sterke buiging.
+      // Ver weg: grote virtuele afstand -> flauwe buiging.
+      const sourceY = -compassRadius - (distanceMeters * 3.5);
+
+      // Ruime afstand tussen de lijnen (geen storende Moiré, maar scherpe golffronten)
+      const waveSpacing = 22; 
+      const numWaves = 15;
+      const timeOffset = (animStep) % waveSpacing;
 
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1.0; // Scherpe, heldere lijnen
-
-      // Aantal golflijnen om het gehele scherm te doorkruisen
-      const totalSpan = maxRadius * 2 + 300;
-      const numWaves = Math.ceil(totalSpan / waveSpacing); 
-      const timeOffset = (waveAnimTime + index * 40) % waveSpacing; 
-
-      const minRadiusNeeded = Math.abs(sourceY) - maxRadius;
-      const maxRadiusNeeded = Math.abs(sourceY) + maxRadius;
+      ctx.lineWidth = 2.5; 
 
       for (let r = 0; r < numWaves; r++) {
-        const radius = (r * waveSpacing) + timeOffset;
-        
-        // Alleen bogen tekenen die binnen het zichtbare scherm vallen
-        if (radius >= minRadiusNeeded && radius <= maxRadiusNeeded) {
-          
-          // Hoge basistransparantie zodat kleuren OOK op grote afstand helder blijven
-          ctx.globalAlpha = 0.75; 
+        const radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset;
 
-          ctx.beginPath();
-          // Grote bogen vanuit de externe bron die over het hele scherm vloeien
-          ctx.arc(0, sourceY, radius, Math.PI * 0.3, Math.PI * 0.7, false);
-          ctx.stroke();
-        }
+        ctx.globalAlpha = Math.max(0.2, 0.85 - (r * 0.04));
+
+        ctx.beginPath();
+        ctx.arc(0, sourceY, radius, Math.PI * 0.38, Math.PI * 0.62, false);
+        ctx.stroke();
       }
 
       ctx.restore();
