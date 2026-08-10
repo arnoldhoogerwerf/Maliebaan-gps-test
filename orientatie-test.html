@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>3-Pijlen Kompas Demo (Visueel)</title>
+  <title>Moiré Golffronten Kompas Demo</title>
   <style>
     body {
       background-color: #0d0d0d;
@@ -26,6 +26,7 @@
       text-align: center;
       padding: 0 20px;
       line-height: 1.4;
+      z-index: 10;
     }
 
     button {
@@ -36,62 +37,27 @@
       font-size: 16px;
       font-weight: bold;
       border-radius: 30px;
-      z-index: 10;
+      z-index: 20;
       box-shadow: 0 0 15px rgba(0, 255, 204, 0.4);
       cursor: pointer;
     }
 
-    #compass-container {
-      width: 280px;
-      height: 280px;
+    #canvas-container {
       position: relative;
-      border: 1px dashed #333;
-      border-radius: 50%;
+      width: 320px;
+      height: 320px;
+      margin-top: 40px;
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-top: 50px;
     }
 
-    .arrow {
-      position: absolute;
-      width: 6px;
-      border-radius: 3px;
-      transform-origin: bottom center;
-      bottom: 50%;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      pointer-events: none;
-    }
-
-    .arrow-label {
-      position: absolute;
-      top: -20px;
-      font-size: 10px;
-      font-weight: bold;
-      white-space: nowrap;
-      background: rgba(0,0,0,0.7);
-      padding: 2px 4px;
-      border-radius: 3px;
-    }
-
-    .arrow::after {
-      content: '';
+    canvas {
       position: absolute;
       top: 0;
-      left: -5px;
-      width: 0;
-      height: 0;
-      border-left: 8px solid transparent;
-      border-right: 8px solid transparent;
-      border-bottom: 12px solid currentColor;
+      left: 0;
+      border-radius: 50%;
     }
-
-    /* Kleuren per doelpunt */
-    #arrow-0 { color: #00ffcc; background: linear-gradient(to top, transparent, #00ffcc); }
-    #arrow-1 { color: #ff0055; background: linear-gradient(to top, transparent, #ff0055); }
-    #arrow-2 { color: #ffcc00; background: linear-gradient(to top, transparent, #ffcc00); }
   </style>
 </head>
 <body>
@@ -99,16 +65,8 @@
   <div id="status">Druk op start om GPS & Kompas te activeren.</div>
   <button id="startBtn">Start Ervaring</button>
 
-  <div id="compass-container">
-    <div id="arrow-0" class="arrow" style="height: 0px; display: none;">
-      <span id="label-0" class="arrow-label">0m</span>
-    </div>
-    <div id="arrow-1" class="arrow" style="height: 0px; display: none;">
-      <span id="label-1" class="arrow-label">0m</span>
-    </div>
-    <div id="arrow-2" class="arrow" style="height: 0px; display: none;">
-      <span id="label-2" class="arrow-label">0m</span>
-    </div>
+  <div id="canvas-container">
+    <canvas id="compassCanvas" width="320" height="320"></canvas>
   </div>
 
   <script>
@@ -119,13 +77,15 @@
     let rawHeading = 0;
     let smoothedHeading = 0;
     let arrowData = [
-      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0 },
-      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0 },
-      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0 }
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: '#00ffcc' },
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: '#ff0055' },
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: '#ffcc00' }
     ];
 
     const startBtn = document.getElementById('startBtn');
     const status = document.getElementById('status');
+    const canvas = document.getElementById('compassCanvas');
+    const ctx = canvas.getContext('2d');
 
     startBtn.addEventListener('click', async () => {
       // 1. iOS Kompas Toestemming
@@ -211,7 +171,19 @@
     }
 
     function renderLoop() {
-      // 1. Smooth Kompas Heading (met atan2 fix voor de 0/360 graden grens)
+      // Clear Canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Teken buitenrand kompas
+      ctx.save();
+      ctx.strokeStyle = '#222';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(160, 160, 150, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      // 1. Smooth Kompas Heading
       let diff = rawHeading - smoothedHeading;
       diff = Math.atan2(Math.sin(diff * Math.PI / 180), Math.cos(diff * Math.PI / 180)) * 180 / Math.PI;
       smoothedHeading += diff * 0.1;
@@ -221,35 +193,72 @@
         let statusText = "";
 
         targetLocations.forEach((target, i) => {
-          const arrowEl = document.getElementById(`arrow-${i}`);
-          const labelEl = document.getElementById(`label-${i}`);
-          arrowEl.style.display = 'flex';
-
-          // 2. Smooth Afstand
+          // Smooth Afstand
           arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
           const dist = arrowData[i].currentDist;
 
-          // 3. Schaal Pijllengte (20px tot 130px)
-          const arrowLength = Math.max(20, Math.min(130, (dist / 150) * 130));
-
-          // 4. Smooth Rotatie van de pijl (met atan2 fix)
+          // Smooth Rotatie van de bron richting (met atan2 fix)
           const targetAngle = arrowData[i].bearing - smoothedHeading;
           let angleDiff = targetAngle - arrowData[i].currentAngle;
           angleDiff = Math.atan2(Math.sin(angleDiff * Math.PI / 180), Math.cos(angleDiff * Math.PI / 180)) * 180 / Math.PI;
           arrowData[i].currentAngle += angleDiff * 0.15;
 
-          // Pas Visuele UI toe
-          arrowEl.style.height = `${arrowLength}px`;
-          arrowEl.style.transform = `rotate(${arrowData[i].currentAngle}deg)`;
-          labelEl.innerText = `${Math.round(dist)}m`;
+          // Teken de Moiré Golfbron op het canvas
+          drawWaveSource(ctx, arrowData[i].currentAngle, dist, arrowData[i].color, i);
 
-          statusText += `Pijl ${i+1}: ${Math.round(dist)}m | `;
+          statusText += `Bron ${i+1}: ${Math.round(dist)}m | `;
         });
 
         status.innerText = statusText.slice(0, -3);
       }
 
       requestAnimationFrame(renderLoop);
+    }
+
+    function drawWaveSource(ctx, angleDeg, distanceMeters, color, index) {
+      ctx.save();
+      
+      // Verplaats de oorsprong naar het centrum van het canvas (160, 160)
+      ctx.translate(160, 160);
+      
+      // Draai naar de hoek van de bron
+      ctx.rotate(angleDeg * Math.PI / 180);
+      
+      // Schaal de afstand van de bron naar het canvas (30px tot 130px vanaf het midden)
+      const renderDist = Math.max(30, Math.min(130, (distanceMeters / 150) * 130));
+      const sourceY = -renderDist; // Voren op canvas is negatieve Y
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.2;
+
+      // 8 tot 12 dunne golfbogen per bron
+      const numWaves = 10;
+      const waveSpacing = 7; // Afstand tussen golflijnen
+      
+      // Tijdsvariabele voor continue rimpeling van binnen naar buiten
+      const timeOffset = (Date.now() / 40 + index * 100) % waveSpacing; 
+
+      for (let r = 0; r < numWaves; r++) {
+        const radius = (r * waveSpacing) + timeOffset;
+        
+        // Transparantie neemt af naarmate de golf verder beweegt
+        const alpha = Math.max(0, 0.8 - (radius / (numWaves * waveSpacing)));
+        ctx.globalAlpha = alpha;
+
+        ctx.beginPath();
+        // Teken een cirkelboog gericht naar de gebruiker toe om interferentie te veroorzaken
+        ctx.arc(0, sourceY, radius, 0, Math.PI * 2, false);
+        ctx.stroke();
+      }
+
+      // Teken klein doellabel boven de bron
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = color;
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${Math.round(distanceMeters)}m`, 0, sourceY - 12);
+
+      ctx.restore();
     }
 
     // Wiskundige functies
