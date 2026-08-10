@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>3D HRTF Audio + 3-Pijlen Kompas Demo</title>
+  <title>3-Pijlen Kompas Demo (Visueel)</title>
   <style>
     body {
       background-color: #0d0d0d;
@@ -96,7 +96,7 @@
 </head>
 <body>
 
-  <div id="status">Druk op start om GPS, Kompas & 3D Audio te activeren.</div>
+  <div id="status">Druk op start om GPS & Kompas te activeren.</div>
   <button id="startBtn">Start Ervaring</button>
 
   <div id="compass-container">
@@ -114,10 +114,6 @@
   <script>
     let userCoords = null;
     let targetLocations = [];
-    
-    // Web Audio variabelen
-    let audioCtx = null;
-    let audioNodes = []; // Bevat { panner, gain, osc } per target
 
     // Smoothing & Sensoren
     let rawHeading = 0;
@@ -143,10 +139,7 @@
         } catch (e) { console.error(e); }
       }
 
-      // 2. Web Audio Context & HRTF Panners Initialiseren
-      initAudio();
-
-      // 3. Sensor Event Listeners
+      // 2. Sensor Event Listeners
       window.addEventListener('deviceorientation', handleOrientation);
 
       if ("geolocation" in navigator) {
@@ -156,46 +149,15 @@
           maximumAge: 1000,
           timeout: 10000
         });
+      } else {
+        status.innerText = "Geen GPS ondersteuning.";
       }
 
       startBtn.style.display = 'none';
 
-      // Start 60fps animatie- en audioloop
+      // Start 60fps animatie loop
       requestAnimationFrame(renderLoop);
     });
-
-    function initAudio() {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      
-      // Drie verschillende frequenties voor de 3 punten (A4, C5, E5 akkoord)
-      const freqs = [440, 523.25, 659.25];
-
-      for (let i = 0; i < 3; i++) {
-        // HRTF Panner
-        const panner = audioCtx.createPanner();
-        panner.panningModel = 'HRTF';
-        panner.distanceModel = 'inverse';
-        panner.refDistance = 10;
-        panner.maxDistance = 150;
-
-        // Volume gain
-        const gain = audioCtx.createGain();
-        gain.gain.setValueAtTime(0.3, audioCtx.currentTime); // Zacht volume
-
-        // Oscillator (Geluidsbron)
-        const osc = audioCtx.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(freqs[i], audioCtx.currentTime);
-
-        // Verbinden: Osc -> Gain -> Panner -> Master
-        osc.connect(gain);
-        gain.connect(panner);
-        panner.connect(audioCtx.destination);
-        osc.start();
-
-        audioNodes.push({ panner, gain, osc });
-      }
-    }
 
     function updatePosition(position) {
       const lat = position.coords.latitude;
@@ -205,12 +167,16 @@
         userCoords = { lat, lng };
         generateTargetLocations(lat, lng);
       } else {
-        // Low-pass filter op GPS om schokken op te vangen
+        // Low-pass filter op GPS
         userCoords.lat = userCoords.lat * 0.7 + lat * 0.3;
         userCoords.lng = userCoords.lng * 0.7 + lng * 0.3;
       }
 
       calculateTargets();
+    }
+
+    function handleError(err) {
+      status.innerText = "GPS Fout: " + err.message;
     }
 
     function generateTargetLocations(lat, lng) {
@@ -276,19 +242,6 @@
           arrowEl.style.height = `${arrowLength}px`;
           arrowEl.style.transform = `rotate(${arrowData[i].currentAngle}deg)`;
           labelEl.innerText = `${Math.round(dist)}m`;
-
-          // 5. Update Web Audio HRTF Posities in 3D-ruimte
-          if (audioNodes[i] && audioCtx) {
-            // Relatieve hoek in radialen voor 3D audio-positionering
-            const relRad = arrowData[i].currentAngle * (Math.PI / 180);
-            
-            // X = Links/Rechts, Z = Voor/Achter (geschaald naar afstand)
-            const x = Math.sin(relRad) * (dist / 10);
-            const z = -Math.cos(relRad) * (dist / 10);
-
-            audioNodes[i].panner.positionX.setValueAtTime(x, audioCtx.currentTime);
-            audioNodes[i].panner.positionZ.setValueAtTime(z, audioCtx.currentTime);
-          }
 
           statusText += `Pijl ${i+1}: ${Math.round(dist)}m | `;
         });
