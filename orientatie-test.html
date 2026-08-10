@@ -223,7 +223,7 @@
 
     speedInput.addEventListener('input', (e) => {
       config.animSpeed = parseFloat(e.target.value);
-      speedVal.innerText = config.animSpeed.toFixed(3);
+      speedVal.innerText = config.animSpeed.toFixed(0.005);
     });
 
     // Inklapbaar paneel
@@ -296,7 +296,7 @@
       for (let i = 0; i < count; i++) {
         const angle = baseAngle + (i * step) + ((Math.random() - 0.5) * (step * 0.4));
         
-        // Exponentiële verdeling: bronnen genereren nu significant vaker dichtbij (5m - 200m)
+        // Exponentiële afstandsverdeling (bronnen genereren vaker dichtbij)
         const distanceInMeters = Math.floor(5 + Math.pow(Math.random(), 2) * 195);
         
         const deltaLat = (distanceInMeters / 111111) * Math.cos(angle * Math.PI / 180);
@@ -358,7 +358,15 @@
           const targetAngle = arrowData[i].bearing - smoothedHeading;
           let angleDiff = targetAngle - arrowData[i].currentAngle;
           angleDiff = Math.atan2(Math.sin(angleDiff * Math.PI / 180), Math.cos(angleDiff * Math.PI / 180)) * 180 / Math.PI;
-          arrowData[i].currentAngle += angleDiff * 0.1;
+
+          // --- OPTIE 2: DYNAMISCHE TRAGHEID (MASSA) BIJ NABUURSCHAP ---
+          // Bepaal de smoothing-factor op basis van afstand (geklemd tussen 2m en 50m)
+          // Ver weg (>50m): snelle reactie (0.10)
+          // Dichtbij (<2m): hele trage reactie (0.005) -> voorkomt GPS-geklap
+          const clampedDist = Math.max(2, Math.min(50, dist));
+          const rotationSpeed = 0.005 + ((clampedDist - 2) / 48) * (0.10 - 0.005);
+
+          arrowData[i].currentAngle += angleDiff * rotationSpeed;
 
           drawFullWaveCircles(ctx, arrowData[i].currentAngle, dist, center, compassRadius);
 
