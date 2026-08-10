@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas (Dynamische Variatie)</title>
+  <title>Golffront Kompas (Gradiënt & Afstand)</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -82,13 +82,13 @@
     let rawHeading = 0;
     let smoothedHeading = 0;
     
-    // Eén eenduidige kleur voor alle bronnen
-    const UNIFORM_COLOR = '#00ffcc';
+    // Basis-kleur (Cyaan/Neon)
+    const UNIFORM_COLOR = { r: 0, g: 255, b: 204 };
 
     let arrowData = [
-      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: UNIFORM_COLOR },
-      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: UNIFORM_COLOR },
-      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0, color: UNIFORM_COLOR }
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0 },
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0 },
+      { currentAngle: 0, currentDist: 0, targetDist: 0, bearing: 0 }
     ];
 
     const startBtn = document.getElementById('startBtn');
@@ -222,8 +222,8 @@
           angleDiff = Math.atan2(Math.sin(angleDiff * Math.PI / 180), Math.cos(angleDiff * Math.PI / 180)) * 180 / Math.PI;
           arrowData[i].currentAngle += angleDiff * 0.1;
 
-          // Teken ronde golfcirkels
-          drawFullWaveCircles(ctx, arrowData[i].currentAngle, dist, arrowData[i].color, center, compassRadius);
+          // Teken ronde golfcirkels met helderheidsgradiënt naar afstand
+          drawFullWaveCircles(ctx, arrowData[i].currentAngle, dist, center, compassRadius);
 
           statusText += `B${i+1}: ${Math.round(dist)}m | `;
         });
@@ -245,7 +245,7 @@
       requestAnimationFrame(renderLoop);
     }
 
-    function drawFullWaveCircles(ctx, angleDeg, distanceMeters, color, center, compassRadius) {
+    function drawFullWaveCircles(ctx, angleDeg, distanceMeters, center, compassRadius) {
       ctx.save();
       ctx.translate(center, center);
       ctx.rotate(angleDeg * Math.PI / 180);
@@ -254,16 +254,24 @@
       const sourceY = -compassRadius - (distanceMeters * 3.2);
 
       const waveSpacing = 22; 
-      const numWaves = 22;
+      const numWaves = 24;
       const timeOffset = (animStep) % waveSpacing;
-
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2.0; 
 
       for (let r = 0; r < numWaves; r++) {
         const radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset;
 
-        ctx.globalAlpha = Math.max(0.12, 0.8 - (r * 0.03));
+        // GRADIËNT GRONDBINSDING:
+        // Naarmate r groter wordt (golf reist verder af van de bron / komt dieper op de kaart),
+        // verhogen of verlagen we de transparantie en streekdikte.
+        // r = 0 is het verst van het centrum (minder helder) -> r = numWaves is het dichtst bij (volledig helder)
+        const progress = r / numWaves; // Verloop van 0.0 naar 1.0
+        
+        // Kwadratisch verloop voor een natuurlijk visueel effect (fade-in)
+        const alpha = Math.min(1.0, Math.max(0.08, Math.pow(progress, 1.8) * 0.95)); 
+        const lineWidth = 0.8 + (progress * 1.6); // Dikkere lijnen dichtbij
+
+        ctx.strokeStyle = `rgba(${UNIFORM_COLOR.r}, ${UNIFORM_COLOR.g}, ${UNIFORM_COLOR.b}, ${alpha})`;
+        ctx.lineWidth = lineWidth;
 
         ctx.beginPath();
         ctx.arc(0, sourceY, radius, 0, Math.PI * 2, false);
