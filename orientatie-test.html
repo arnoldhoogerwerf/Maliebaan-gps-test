@@ -1,73 +1,42 @@
-<!DOCTYPE html>
-<html lang="nl">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HRTF + Kompas Demo</title>
-  <style>
-    body { background: #111; color: #fff; font-family: sans-serif; text-align: center; }
-    #compass { width: 150px; height: 150px; border: 2px solid #555; border-radius: 50%; margin: 50px auto; position: relative; }
-    #arrow { width: 4px; height: 60px; background: #00ffcc; position: absolute; top: 15px; left: 73px; transform-origin: bottom center; }
-  </style>
-</head>
-<body>
-
-  <h2>Audio-Kompas Prototype</h2>
-  <button id="startBtn">Start Audio & Kompas</button>
+function renderLoop() {
+  // 1. Smooth Kompas Heading (met correctie voor de 0/360-grens)
+  let diff = rawHeading - smoothedHeading;
   
-  <div id="compass">
-    <div id="arrow"></div>
-  </div>
+  // Dwing het verschil altijd tussen -180 en +180 graden
+  diff = Math.atan2(Math.sin(diff * Math.PI / 180), Math.cos(diff * Math.PI / 180)) * 180 / Math.PI;
+  
+  smoothedHeading += diff * 0.1; // Smoothing factor
+  
+  // Zorg dat smoothedHeading netjes tussen 0 en 360 blijft
+  smoothedHeading = (smoothedHeading + 360) % 360;
 
-  <script>
-    let audioCtx, panner, soundSource;
+  if (userCoords && targetLocations.length > 0) {
+    targetLocations.forEach((target, i) => {
+      const arrowEl = document.getElementById(`arrow-${i}`);
+      const labelEl = document.getElementById(`label-${i}`);
 
-    document.getElementById('startBtn').addEventListener('click', async () => {
-      // 1. Vraag iOS kompas-toestemming
-      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-        await DeviceOrientationEvent.requestPermission();
-      }
+      // Smooth Afstand
+      arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
+      const dist = arrowData[i].currentDist;
 
-      // 2. Start Web Audio Context
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // Schaal Pijllengte
+      const arrowLength = Math.max(20, Math.min(130, (dist / 150) * 130));
+
+      // 2. Smooth Rotatie van de pijl (ook met 0/360 correctie)
+      const targetAngle = arrowData[i].bearing - smoothedHeading;
+      let angleDiff = targetAngle - arrowData[i].currentAngle;
       
-      // Maak HRTF Panner
-      panner = audioCtx.createPanner();
-      panner.panningModel = 'HRTF';
-      panner.distanceModel = 'inverse';
-
-      // Maak een simpele ruis- of toon-bron (geen extern bestand nodig!)
-      const osc = audioCtx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(440, audioCtx.currentTime); // A4 toon
+      // Dwing de hoek van de pijl ook over de kortste weg
+      angleDiff = Math.atan2(Math.sin(angleDiff * Math.PI / 180), Math.cos(angleDiff * Math.PI / 180)) * 180 / Math.PI;
       
-      // Verbinden: Osc -> Panner -> Speakers
-      osc.connect(panner);
-      panner.connect(audioCtx.destination);
-      osc.start();
+      arrowData[i].currentAngle += angleDiff * 0.15;
 
-      // 3. Luister naar kompas/oriëntatie
-      window.addEventListener('deviceorientation', handleOrientation);
+      // Pas CSS toe
+      arrowEl.style.height = `${arrowLength}px`;
+      arrowEl.style.transform = `rotate(${arrowData[i].currentAngle}deg)`;
+      labelEl.innerText = `${Math.round(dist)}m`;
     });
+  }
 
-    function handleOrientation(event) {
-      // Haal kompasrichting op (iOS gebruikt webkitCompassHeading)
-      let heading = event.webkitCompassHeading || (360 - event.alpha);
-      
-      // Update Visuele Pijl
-      document.getElementById('arrow').style.transform = `rotate(${heading}deg)`;
-
-      // Update HRTF Audio Positie (bereken x en z op een cirkel)
-      if (panner && audioCtx) {
-        let radians = heading * (Math.PI / 180);
-        let x = Math.sin(radians);
-        let z = -Math.cos(radians);
-        
-        // Zet de virtuele geluidsbron op positie (x, 0, z) rondom het hoofd
-        panner.positionX.setValueAtTime(x, audioCtx.currentTime);
-        panner.positionZ.setValueAtTime(z, audioCtx.currentTime);
-      }
-    }
-  </script>
-</body>
-</html>
+  requestAnimationFrame(renderLoop);
+}
