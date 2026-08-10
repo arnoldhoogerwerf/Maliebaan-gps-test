@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas (Test Interface)</title>
+  <title>Golffront Kompas (Bron-Gradiënt Test)</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -306,7 +306,6 @@
       smoothedHeading += diff * 0.08;
       smoothedHeading = (smoothedHeading + 360) % 360;
 
-      // Snelheid instelbaar via slider
       animStep += config.animSpeed;
 
       if (userCoords && targetLocations.length > 0) {
@@ -347,20 +346,26 @@
       ctx.translate(center, center);
       ctx.rotate(angleDeg * Math.PI / 180);
 
+      // Positie van de bron buiten het scherm
       const sourceY = -compassRadius - (distanceMeters * 3.2);
 
       const waveSpacing = config.waveSpacing; 
-      const numWaves = 24;
+      const numWaves = 35; // Voldoende lussen om over het hele kompas te reiken
       const timeOffset = (animStep) % waveSpacing;
 
+      // Maximaal bereik van de bron (in px) voordat de golf volledig dooft
+      const maxSourceReach = 1000; 
+
       for (let r = 0; r < numWaves; r++) {
+        // Straal gemeten VANAF de bron
         const radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset;
 
-        // Omgekeerde gradiënt met dynamische exponent curve
-        const progress = 1.0 - (r / numWaves);
+        // GRADIËNT VANAF DE BRON:
+        // progressFromSource = 1.0 vlak bij de bron, dooft uit naar 0.0 naarmate de straal MaxSourceReach nadert
+        const progressFromSource = Math.max(0.0, 1.0 - (radius / maxSourceReach));
         
-        const alpha = Math.min(1.0, Math.max(0.05, Math.pow(progress, config.exponent) * 0.95)); 
-        const lineWidth = 0.8 + (progress * 1.6);
+        const alpha = Math.min(1.0, Math.max(0.02, Math.pow(progressFromSource, config.exponent))); 
+        const lineWidth = 0.6 + (progressFromSource * 2.0);
 
         ctx.strokeStyle = `rgba(${UNIFORM_COLOR.r}, ${UNIFORM_COLOR.g}, ${UNIFORM_COLOR.b}, ${alpha})`;
         ctx.lineWidth = lineWidth;
