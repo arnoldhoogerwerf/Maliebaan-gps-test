@@ -3,442 +3,137 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas (Vloeistofsimulatie)</title>
+  <title>Realistische Vloeistof Golven (Pixel-Metaballs)</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
       background-color: #0d0d0d;
       color: #fff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
       overflow: hidden;
     }
 
     #status {
-      position: absolute;
-      top: 15px;
-      left: 15px;
-      font-size: 11px;
-      color: #aaa;
-      text-align: left;
-      line-height: 1.3;
-      z-index: 10;
-      pointer-events: none;
-      max-width: calc(100% - 180px);
-      max-height: 120px;
-      overflow: hidden;
+      position: absolute; top: 15px; left: 15px;
+      font-size: 11px; color: #aaa; z-index: 10;
+      pointer-events: none; max-width: calc(100% - 180px);
     }
 
     button.start-btn {
-      position: absolute;
-      background: #00ffcc;
-      color: #000;
-      border: none;
-      padding: 16px 30px;
-      font-size: 16px;
-      font-weight: bold;
-      border-radius: 30px;
-      z-index: 30;
-      box-shadow: 0 0 20px rgba(0, 255, 204, 0.4);
-      cursor: pointer;
+      position: absolute; background: #00ffcc; color: #000;
+      border: none; padding: 16px 30px; font-size: 16px;
+      font-weight: bold; border-radius: 30px; z-index: 30;
+      box-shadow: 0 0 20px rgba(0, 255, 204, 0.4); cursor: pointer;
     }
-
-    #controls {
-      position: absolute;
-      top: 15px;
-      right: 15px;
-      background: rgba(20, 20, 20, 0.85);
-      border: 1px solid #333;
-      backdrop-filter: blur(8px);
-      padding: 12px 16px;
-      border-radius: 12px;
-      z-index: 20;
-      width: 210px;
-      font-size: 11px;
-      color: #ddd;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-    }
-
-    #controls h3 {
-      margin: 0 0 8px 0;
-      font-size: 12px;
-      color: #00ffcc;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      cursor: pointer;
-    }
-
-    .control-group { margin-bottom: 10px; }
-    .control-group:last-child { margin-bottom: 0; }
-    .control-group label { display: flex; justify-content: space-between; margin-bottom: 3px; }
-    .control-group input[type="range"] { width: 100%; accent-color: #00ffcc; cursor: pointer; }
 
     #canvas-container {
-      position: relative;
-      width: 100vw;
-      height: 100vw;
-      max-width: 500px;
-      max-height: 500px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background-color: #0d0d0d;
+      position: relative; width: 100vw; height: 100vw;
+      max-width: 400px; max-height: 400px;
+      display: flex; align-items: center; justify-content: center;
     }
 
     canvas {
-      width: 100%;
-      height: 100%;
+      width: 100%; height: 100%;
       border-radius: 50%;
+      background: #000;
+      box-shadow: 0 0 15px rgba(0,0,0,0.8);
     }
   </style>
 </head>
 <body>
 
-  <div id="status">Druk op start om te beginnen.</div>
-  <button class="start-btn" id="startBtn">Start Ervaring</button>
-
-  <div id="controls">
-    <h3 id="toggleControls"><span>Parameters</span> <span id="toggleIcon">−</span></h3>
-    <div id="controlsBody">
-      <div class="control-group">
-        <label for="countInput"><span>Aantal Bronnen</span> <strong id="countVal">3</strong></label>
-        <input type="range" id="countInput" min="1" max="12" value="3" step="1">
-      </div>
-
-      <div class="control-group">
-        <label for="spacingInput"><span>Lijnafstand</span> <strong id="spacingVal">45px</strong></label>
-        <input type="range" id="spacingInput" min="10" max="60" value="45" step="1">
-      </div>
-
-      <div class="control-group">
-        <label for="thicknessInput"><span>Lijndikte</span> <strong id="thicknessVal">1.0px</strong></label>
-        <input type="range" id="thicknessInput" min="0.5" max="8.0" value="1.0" step="0.1">
-      </div>
-
-      <div class="control-group">
-        <label for="exponentInput"><span>Gradiënt Curve</span> <strong id="exponentVal">4.0</strong></label>
-        <input type="range" id="exponentInput" min="0.5" max="4.0" value="4.0" step="0.1">
-      </div>
-
-      <div class="control-group">
-        <label for="speedInput"><span>Snelheid</span> <strong id="speedVal">0.020</strong></label>
-        <input type="range" id="speedInput" min="0.0" max="1.0" value="0.02" step="0.005">
-      </div>
-    </div>
-  </div>
+  <div id="status">Druk op start voor de vloeistof-test.</div>
+  <button class="start-btn" id="startBtn">Start Vloeistof Simulatie</button>
 
   <div id="canvas-container">
-    <canvas id="compassCanvas" width="400" height="400"></canvas>
+    <!-- Lage resolutie canvas (160x160) geüpscaled via CSS voor maximale iOS performance -->
+    <canvas id="liquidCanvas" width="160" height="160"></canvas>
   </div>
 
   <script>
-    let userCoords = null;
-    let targetLocations = [];
-
-    let config = {
-      sourceCount: 3,
-      waveSpacing: 45,
-      strokeWidth: 1.0,
-      exponent: 4.0,
-      animSpeed: 0.02,
-      geoFixRadius: 12 
-    };
-
-    let rawHeading = 0;
-    let smoothedHeading = 0;
-    
-    const UNIFORM_COLOR = { r: 0, g: 255, b: 204 };
-    let arrowData = [];
-
     const startBtn = document.getElementById('startBtn');
     const status = document.getElementById('status');
-    const canvas = document.getElementById('compassCanvas');
+    const canvas = document.getElementById('liquidCanvas');
     const ctx = canvas.getContext('2d');
 
-    const countInput = document.getElementById('countInput');
-    const spacingInput = document.getElementById('spacingInput');
-    const thicknessInput = document.getElementById('thicknessInput');
-    const exponentInput = document.getElementById('exponentInput');
-    const speedInput = document.getElementById('speedInput');
+    const width = canvas.width;
+    const height = canvas.height;
+    const imgData = ctx.createImageData(width, height);
+    const data = imgData.data;
 
-    const countVal = document.getElementById('countVal');
-    const spacingVal = document.getElementById('spacingVal');
-    const thicknessVal = document.getElementById('thicknessVal');
-    const exponentVal = document.getElementById('exponentVal');
-    const speedVal = document.getElementById('speedVal');
+    let time = 0;
 
-    countInput.addEventListener('input', (e) => {
-      config.sourceCount = parseInt(e.target.value);
-      countVal.innerText = config.sourceCount;
-      if (userCoords) {
-        generateTargetLocations(userCoords.lat, userCoords.lng);
-        calculateTargets();
-      }
-    });
+    // Drie bewegende vloeistofbronnen (metaball centra)
+    const sources = [
+      { x: 80, y: 30, speed: 0.03, radius: 25 },
+      { x: 40, y: 120, speed: 0.02, radius: 30 },
+      { x: 120, y: 110, speed: 0.025, radius: 22 }
+    ];
 
-    spacingInput.addEventListener('input', (e) => {
-      config.waveSpacing = parseFloat(e.target.value);
-      spacingVal.innerText = config.waveSpacing + 'px';
-    });
-
-    thicknessInput.addEventListener('input', (e) => {
-      config.strokeWidth = parseFloat(e.target.value);
-      thicknessVal.innerText = config.strokeWidth.toFixed(1) + 'px';
-    });
-
-    exponentInput.addEventListener('input', (e) => {
-      config.exponent = parseFloat(e.target.value);
-      exponentVal.innerText = config.exponent.toFixed(1);
-    });
-
-    speedInput.addEventListener('input', (e) => {
-      config.animSpeed = parseFloat(e.target.value);
-      speedVal.innerText = config.animSpeed.toFixed(3);
-    });
-
-    const toggleControls = document.getElementById('toggleControls');
-    const controlsBody = document.getElementById('controlsBody');
-    const toggleIcon = document.getElementById('toggleIcon');
-    let isOpen = true;
-
-    toggleControls.addEventListener('click', () => {
-      isOpen = !isOpen;
-      controlsBody.style.display = isOpen ? 'block' : 'none';
-      toggleIcon.innerText = isOpen ? '−' : '+';
-    });
-
-    startBtn.addEventListener('click', async () => {
-      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        try {
-          const permission = await DeviceOrientationEvent.requestPermission();
-          if (permission !== 'granted') {
-            status.innerText = "Kompas-toestemming geweigerd.";
-            return;
-          }
-        } catch (e) { console.error(e); }
-      }
-
-      window.addEventListener('deviceorientation', handleOrientation);
-
-      if ("geolocation" in navigator) {
-        status.innerText = "GPS zoeken...";
-        navigator.geolocation.watchPosition(updatePosition, handleError, {
-          enableHighAccuracy: true,
-          maximumAge: 1000,
-          timeout: 10000
-        });
-      } else {
-        status.innerText = "Geen GPS ondersteuning.";
-      }
-
+    startBtn.addEventListener('click', () => {
       startBtn.style.display = 'none';
-      requestAnimationFrame(renderLoop);
+      status.innerText = "Simulatie actief (Pixel-Metaballs)...";
+      requestAnimationFrame(render);
     });
 
-    function updatePosition(position) {
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
+    function render() {
+      time += 0.05;
 
-      if (!userCoords) {
-        userCoords = { lat, lng };
-        generateTargetLocations(lat, lng);
-      } else {
-        userCoords.lat = lat;
-        userCoords.lng = lng;
-      }
+      // Beweeg de bronnen lichtjes om samensmelting te demonstreren
+      sources[0].x = 80 + Math.sin(time * 0.8) * 25;
+      sources[0].y = 80 + Math.cos(time * 0.5) * 25;
 
-      calculateTargets();
-    }
+      sources[1].x = 80 + Math.sin(time * 0.6 + 2) * 35;
+      sources[1].y = 80 + Math.cos(time * 0.7 + 1) * 35;
 
-    function handleError(err) {
-      status.innerText = "GPS Fout: " + err.message;
-    }
+      let index = 0;
 
-    function generateTargetLocations(lat, lng) {
-      targetLocations = [];
-      arrowData = [];
-      
-      const count = config.sourceCount;
-      const baseAngle = Math.random() * 360; 
-      const step = 360 / count;
+      // Berekent veldsterkte per pixel
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          let sumField = 0;
 
-      for (let i = 0; i < count; i++) {
-        const angle = baseAngle + (i * step) + ((Math.random() - 0.5) * (step * 0.4));
-        const distanceInMeters = Math.floor(5 + Math.pow(Math.random(), 2) * 195);
-        
-        const deltaLat = (distanceInMeters / 111111) * Math.cos(angle * Math.PI / 180);
-        const deltaLng = (distanceInMeters / (111111 * Math.cos(lat * Math.PI / 180))) * Math.sin(angle * Math.PI / 180);
+          for (let i = 0; i < sources.length; i++) {
+            const dx = x - sources[i].x;
+            const dy = y - sources[i].y;
+            const distSq = dx * dx + dy * dy;
+            
+            // Golffront + Metaball potentiële energie formule
+            const wave = Math.sin(Math.sqrt(distSq) * 0.3 - time * 2);
+            sumField += (sources[i].radius * sources[i].radius) / (distSq + 1) * (1 + 0.3 * wave);
+          }
 
-        targetLocations.push({ lat: lat + deltaLat, lng: lng + deltaLng });
-        arrowData.push({ 
-          smoothedBearing: 0, 
-          fixedBearing: null,
-          currentDist: 0, 
-          targetDist: 0, 
-          bearing: 0 
-        });
-      }
-    }
-
-    function calculateTargets() {
-      if (!userCoords || targetLocations.length === 0) return;
-
-      targetLocations.forEach((target, i) => {
-        if (arrowData[i]) {
-          const dist = getDistance(userCoords.lat, userCoords.lng, target.lat, target.lng);
-          arrowData[i].targetDist = dist;
-
-          if (dist <= config.geoFixRadius) {
-            if (arrowData[i].fixedBearing === null) {
-              arrowData[i].fixedBearing = arrowData[i].smoothedBearing || arrowData[i].bearing;
-            }
+          // Drempelwaarde (thresholding) voor het harde vloeistof/samensmelt effect
+          if (sumField > 0.8) {
+            // Vloeistof binnenkant (Cyaan glow)
+            data[index]     = 0;                   // R
+            data[index + 1] = Math.min(255, sumField * 180); // G
+            data[index + 2] = 204;                 // B
+            data[index + 3] = 255;                 // Alpha
+          } else if (sumField > 0.65) {
+            // Rand/oppervlaktespanning
+            data[index]     = 255; // Witte vloeistof-rand
+            data[index + 1] = 255;
+            data[index + 2] = 255;
+            data[index + 3] = 255;
           } else {
-            arrowData[i].fixedBearing = null;
-            arrowData[i].bearing = getBearing(userCoords.lat, userCoords.lng, target.lat, target.lng);
+            // Achtergrond
+            data[index]     = 13;
+            data[index + 1] = 13;
+            data[index + 2] = 13;
+            data[index + 3] = 255;
           }
-          
-          if (arrowData[i].smoothedBearing === 0) {
-            arrowData[i].smoothedBearing = arrowData[i].bearing;
-          }
+
+          index += 4;
         }
-      });
-    }
-
-    function handleOrientation(event) {
-      if (event.webkitCompassHeading) {
-        rawHeading = event.webkitCompassHeading;
-      } else if (event.alpha !== null) {
-        rawHeading = 360 - event.alpha;
-      }
-    }
-
-    let animStep = 0;
-
-    function renderLoop() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const center = 200;
-      const compassRadius = 195;
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(center, center, compassRadius, 0, Math.PI * 2);
-      ctx.clip();
-
-      let diff = rawHeading - smoothedHeading;
-      diff = Math.atan2(Math.sin(diff * Math.PI / 180), Math.cos(diff * Math.PI / 180)) * 180 / Math.PI;
-      smoothedHeading += diff * 0.12;
-      smoothedHeading = (smoothedHeading + 360) % 360;
-
-      animStep += config.animSpeed;
-
-      if (userCoords && targetLocations.length > 0) {
-        let statusText = "";
-
-        targetLocations.forEach((target, i) => {
-          if (!arrowData[i]) return;
-
-          arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
-          const dist = arrowData[i].currentDist;
-
-          let activeBearing = 0;
-
-          if (arrowData[i].fixedBearing !== null) {
-            activeBearing = arrowData[i].fixedBearing;
-          } else {
-            let bearingDiff = arrowData[i].bearing - arrowData[i].smoothedBearing;
-            bearingDiff = Math.atan2(Math.sin(bearingDiff * Math.PI / 180), Math.cos(bearingDiff * Math.PI / 180)) * 180 / Math.PI;
-            arrowData[i].smoothedBearing += bearingDiff * 0.08;
-            activeBearing = arrowData[i].smoothedBearing;
-          }
-
-          const relativeAngle = activeBearing - smoothedHeading;
-
-          drawBoundaryWaveCircles(ctx, relativeAngle, dist, center, compassRadius);
-
-          if (i < 4) {
-            const isLocked = arrowData[i].fixedBearing !== null ? " [LOCKED]" : "";
-            statusText += `B${i+1}: ${Math.round(dist)}m${isLocked} | `;
-          }
-        });
-
-        if (targetLocations.length > 4) statusText += `+${targetLocations.length - 4} extra`;
-        status.innerHTML = statusText;
       }
 
-      ctx.restore();
-
-      ctx.save();
-      ctx.strokeStyle = '#333';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(center, center, compassRadius, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-
-      requestAnimationFrame(renderLoop);
-    }
-
-    function drawBoundaryWaveCircles(ctx, angleDeg, distanceMeters, center, compassRadius) {
-      ctx.save();
-      
-      // HARDWARE-VRIENDELIJKE CANVAS BLUR (Compatibel met iOS Safari)
-      ctx.filter = 'blur(3px)';
-      
-      ctx.translate(center, center);
-      ctx.rotate(angleDeg * Math.PI / 180);
-
-      const sourceY = -compassRadius - Math.max(10, distanceMeters * 2.5);
-
-      const waveSpacing = config.waveSpacing; 
-      const numWaves = 35;
-      const timeOffset = (animStep) % waveSpacing;
-
-      const maxSourceReach = 1000; 
-
-      for (let r = 0; r < numWaves; r++) {
-        const radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset;
-
-        const progressFromSource = Math.max(0.0, 1.0 - (radius / maxSourceReach));
-        const densityFactor = Math.max(0.4, 1.2 - (config.sourceCount * 0.08));
-        const alpha = Math.min(1.0, Math.max(0.02, Math.pow(progressFromSource, config.exponent) * densityFactor)); 
-        
-        ctx.lineWidth = config.strokeWidth + 2; // Iets dikker voor een betere gloei/vloeistof-look
-        ctx.strokeStyle = `rgba(${UNIFORM_COLOR.r}, ${UNIFORM_COLOR.g}, ${UNIFORM_COLOR.b}, ${alpha})`;
-
-        ctx.beginPath();
-        ctx.arc(0, sourceY, radius, 0, Math.PI * 2, false);
-        ctx.stroke();
-      }
-
-      ctx.restore();
-    }
-
-    function getDistance(lat1, lon1, lat2, lon2) {
-      const R = 6371e3; 
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLon = (lon2 - lon1) * Math.PI / 180;
-      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2);
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    }
-
-    function getBearing(lat1, lon1, lat2, lon2) {
-      const y = Math.sin((lon2 - lon1) * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180);
-      const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
-                Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos((lon2 - lon1) * Math.PI / 180);
-      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+      ctx.putImageData(imgData, 0, 0);
+      requestAnimationFrame(render);
     }
   </script>
 </body>
