@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas (Multi-Bron Test)</title>
+  <title>Golffront Kompas</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -50,7 +50,6 @@
       cursor: pointer;
     }
 
-    /* Test Controls Panel */
     #controls {
       position: absolute;
       top: 15px;
@@ -114,7 +113,6 @@
       width: 100%;
       height: 100%;
       border-radius: 50%;
-      image-rendering: crisp-edges;
     }
   </style>
 </head>
@@ -123,7 +121,6 @@
   <div id="status">Druk op start om te beginnen.</div>
   <button class="start-btn" id="startBtn">Start Ervaring</button>
 
-  <!-- Controls Panel -->
   <div id="controls">
     <h3 id="toggleControls"><span>Parameters</span> <span id="toggleIcon">−</span></h3>
     <div id="controlsBody">
@@ -133,8 +130,8 @@
       </div>
 
       <div class="control-group">
-        <label for="spacingInput"><span>Lijnafstand</span> <strong id="spacingVal">22px</strong></label>
-        <input type="range" id="spacingInput" min="10" max="60" value="22" step="1">
+        <label for="spacingInput"><span>Lijnafstand</span> <strong id="spacingVal">45px</strong></label>
+        <input type="range" id="spacingInput" min="10" max="60" value="45" step="1">
       </div>
 
       <div class="control-group">
@@ -143,12 +140,12 @@
       </div>
 
       <div class="control-group">
-        <label for="exponentInput"><span>Gradiënt Curve</span> <strong id="exponentVal">1.8</strong></label>
-        <input type="range" id="exponentInput" min="0.5" max="4.0" value="1.8" step="0.1">
+        <label for="exponentInput"><span>Gradiënt Curve</span> <strong id="exponentVal">4.0</strong></label>
+        <input type="range" id="exponentInput" min="0.5" max="4.0" value="4.0" step="0.1">
       </div>
 
       <div class="control-group">
-        <label for="speedInput"><span>Snelheid</span> <strong id="speedVal">0.02</strong></label>
+        <label for="speedInput"><span>Snelheid</span> <strong id="speedVal">0.020</strong></label>
         <input type="range" id="speedInput" min="0.0" max="1.0" value="0.02" step="0.005">
       </div>
     </div>
@@ -162,19 +159,20 @@
     let userCoords = null;
     let targetLocations = [];
 
+    // DE STANDAARD-PARAMETERS:
     let config = {
       sourceCount: 3,
-      waveSpacing: 22,
-      strokeWidth: 1.0,
-      exponent: 1.8,
-      animSpeed: 0.02
+      waveSpacing: 45,  // 45px
+      strokeWidth: 1.0, // 1.0px
+      exponent: 4.0,    // Gradiënt 4
+      animSpeed: 0.02,  // 0.02 snelheid
+      geoFixRadius: 12 
     };
 
     let rawHeading = 0;
     let smoothedHeading = 0;
     
     const UNIFORM_COLOR = { r: 0, g: 255, b: 204 };
-
     let arrowData = [];
 
     const startBtn = document.getElementById('startBtn');
@@ -297,7 +295,13 @@
         const deltaLng = (distanceInMeters / (111111 * Math.cos(lat * Math.PI / 180))) * Math.sin(angle * Math.PI / 180);
 
         targetLocations.push({ lat: lat + deltaLat, lng: lng + deltaLng });
-        arrowData.push({ smoothedBearing: 0, currentDist: 0, targetDist: 0, bearing: 0 });
+        arrowData.push({ 
+          smoothedBearing: 0, 
+          fixedBearing: null,
+          currentDist: 0, 
+          targetDist: 0, 
+          bearing: 0 
+        });
       }
     }
 
@@ -306,8 +310,17 @@
 
       targetLocations.forEach((target, i) => {
         if (arrowData[i]) {
-          arrowData[i].targetDist = getDistance(userCoords.lat, userCoords.lng, target.lat, target.lng);
-          arrowData[i].bearing = getBearing(userCoords.lat, userCoords.lng, target.lat, target.lng);
+          const dist = getDistance(userCoords.lat, userCoords.lng, target.lat, target.lng);
+          arrowData[i].targetDist = dist;
+
+          if (dist <= config.geoFixRadius) {
+            if (arrowData[i].fixedBearing === null) {
+              arrowData[i].fixedBearing = arrowData[i].smoothedBearing || arrowData[i].bearing;
+            }
+          } else {
+            arrowData[i].fixedBearing = null;
+            arrowData[i].bearing = getBearing(userCoords.lat, userCoords.lng, target.lat, target.lng);
+          }
           
           if (arrowData[i].smoothedBearing === 0) {
             arrowData[i].smoothedBearing = arrowData[i].bearing;
@@ -337,7 +350,6 @@
       ctx.arc(center, center, compassRadius, 0, Math.PI * 2);
       ctx.clip();
 
-      // Fysieke oriëntatie van het kompas reageert ALTIJD direct en soepel (0.12 factor)
       let diff = rawHeading - smoothedHeading;
       diff = Math.atan2(Math.sin(diff * Math.PI / 180), Math.cos(diff * Math.PI / 180)) * 180 / Math.PI;
       smoothedHeading += diff * 0.12;
@@ -354,21 +366,24 @@
           arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
           const dist = arrowData[i].currentDist;
 
-          // Alleen de GPS-bearing krijgt massa/traagheid bij nabijheid
-          const clampedDist = Math.max(2, Math.min(50, dist));
-          const gpsFilterSpeed = 0.005 + ((clampedDist - 2) / 48) * (0.10 - 0.005);
+          let activeBearing = 0;
 
-          let bearingDiff = arrowData[i].bearing - arrowData[i].smoothedBearing;
-          bearingDiff = Math.atan2(Math.sin(bearingDiff * Math.PI / 180), Math.cos(bearingDiff * Math.PI / 180)) * 180 / Math.PI;
-          arrowData[i].smoothedBearing += bearingDiff * gpsFilterSpeed;
+          if (arrowData[i].fixedBearing !== null) {
+            activeBearing = arrowData[i].fixedBearing;
+          } else {
+            let bearingDiff = arrowData[i].bearing - arrowData[i].smoothedBearing;
+            bearingDiff = Math.atan2(Math.sin(bearingDiff * Math.PI / 180), Math.cos(bearingDiff * Math.PI / 180)) * 180 / Math.PI;
+            arrowData[i].smoothedBearing += bearingDiff * 0.08;
+            activeBearing = arrowData[i].smoothedBearing;
+          }
 
-          // De uiteindelijke render-hoek trekt de actuele kompasstand af van de gefilterde GPS-richting
-          const relativeAngle = arrowData[i].smoothedBearing - smoothedHeading;
+          const relativeAngle = activeBearing - smoothedHeading;
 
-          drawFullWaveCircles(ctx, relativeAngle, dist, center, compassRadius);
+          drawBoundaryWaveCircles(ctx, relativeAngle, dist, center, compassRadius);
 
           if (i < 4) {
-            statusText += `B${i+1}: ${Math.round(dist)}m | `;
+            const isLocked = arrowData[i].fixedBearing !== null ? " [LOCKED]" : "";
+            statusText += `B${i+1}: ${Math.round(dist)}m${isLocked} | `;
           }
         });
 
@@ -389,12 +404,12 @@
       requestAnimationFrame(renderLoop);
     }
 
-    function drawFullWaveCircles(ctx, angleDeg, distanceMeters, center, compassRadius) {
+    function drawBoundaryWaveCircles(ctx, angleDeg, distanceMeters, center, compassRadius) {
       ctx.save();
       ctx.translate(center, center);
       ctx.rotate(angleDeg * Math.PI / 180);
 
-      const sourceY = -compassRadius - (distanceMeters * 3.2);
+      const sourceY = -compassRadius - Math.max(10, distanceMeters * 2.5);
 
       const waveSpacing = config.waveSpacing; 
       const numWaves = 35;
