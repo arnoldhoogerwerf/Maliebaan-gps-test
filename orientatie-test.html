@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas - Waveform & Pulse</title>
+  <title>Golffront Kompas - Live Brightness Flicker</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -95,8 +95,8 @@
       </div>
 
       <div class="control-group">
-        <label for="jitterInput"><span>Waveform Trilling</span> <strong id="jitterVal">3.5px</strong></label>
-        <input type="range" id="jitterInput" min="0.0" max="10.0" value="3.5" step="0.5">
+        <label for="flickerInput"><span>Flicker Intensiteit</span> <strong id="flickerVal">0.60</strong></label>
+        <input type="range" id="flickerInput" min="0.0" max="1.0" value="0.60" step="0.05">
       </div>
 
       <div class="control-group">
@@ -130,7 +130,7 @@
       sourceCount: 3,
       sampleLengthSec: 4.0,
       fadeOutDurationSec: 2.0,
-      jitterAmount: 3.5,
+      flickerAmount: 0.60,
       waveSpacing: 45,
       strokeWidth: 1.0,
       exponent: 4.0,
@@ -157,7 +157,7 @@
     const countInput = document.getElementById('countInput');
     const sampleLengthInput = document.getElementById('sampleLengthInput');
     const fadeTimeInput = document.getElementById('fadeTimeInput');
-    const jitterInput = document.getElementById('jitterInput');
+    const flickerInput = document.getElementById('flickerInput');
     const spacingInput = document.getElementById('spacingInput');
     const thicknessInput = document.getElementById('thicknessInput');
     const exponentInput = document.getElementById('exponentInput');
@@ -166,7 +166,7 @@
     const countVal = document.getElementById('countVal');
     const sampleLengthVal = document.getElementById('sampleLengthVal');
     const fadeTimeVal = document.getElementById('fadeTimeVal');
-    const jitterVal = document.getElementById('jitterVal');
+    const flickerVal = document.getElementById('flickerVal');
     const spacingVal = document.getElementById('spacingVal');
     const thicknessVal = document.getElementById('thicknessVal');
     const exponentVal = document.getElementById('exponentVal');
@@ -188,9 +188,9 @@
       fadeTimeVal.innerText = config.fadeOutDurationSec.toFixed(1) + 's';
     });
 
-    jitterInput.addEventListener('input', (e) => {
-      config.jitterAmount = parseFloat(e.target.value);
-      jitterVal.innerText = config.jitterAmount.toFixed(1) + 'px';
+    flickerInput.addEventListener('input', (e) => {
+      config.flickerAmount = parseFloat(e.target.value);
+      flickerVal.innerText = config.flickerAmount.toFixed(2);
     });
 
     spacingInput.addEventListener('input', (e) => {
@@ -386,7 +386,7 @@
         bearingDiff = Math.atan2(Math.sin(bearingDiff * Math.PI / 180), Math.cos(bearingDiff * Math.PI / 180)) * 180 / Math.PI;
 
         if (source.fadeOpacity > 0 && !source.isRespawning) {
-          drawBoundaryWaveCircles(ctx, bearingDiff, source.dist, center, compassRadius, source, currentTime);
+          drawBoundaryWaveCircles(ctx, bearingDiff, source.dist, center, compassRadius, source);
         }
 
         if (i < 4) {
@@ -421,7 +421,7 @@
       requestAnimationFrame(renderLoop);
     }
 
-    function drawBoundaryWaveCircles(ctx, angleDeg, distanceMeters, center, compassRadius, sourceData, currentTime) {
+    function drawBoundaryWaveCircles(ctx, angleDeg, distanceMeters, center, compassRadius, sourceData) {
       ctx.save();
       ctx.translate(center, center);
       ctx.rotate(angleDeg * Math.PI / 180);
@@ -435,26 +435,21 @@
       const isPlaying = sourceData.isTriggered && sourceData.playTimer > 0;
       const currentColor = sourceData.isTriggered ? RED_COLOR : UNIFORM_COLOR;
 
-      // Helderheid pulse (amplitude-simulatie bij afspelen)
-      let pulseOpacityMod = 1.0;
-      if (isPlaying) {
-        pulseOpacityMod = 0.75 + Math.sin(currentTime * 0.015) * 0.25; 
+      // Willekeurige schokkerige helderheid tijdens LIVE afspelen
+      let randomFlickerMod = 1.0;
+      if (isPlaying && config.flickerAmount > 0) {
+        // Schiet willekeurig omlaag tot het ingestelde flicker-niveau
+        randomFlickerMod = (1.0 - config.flickerAmount) + (Math.random() * config.flickerAmount);
       }
 
       for (let r = 0; r < numWaves; r++) {
-        let radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset;
-
-        // Dynamic Waveform Jitter (Trilling op straal bij afspelen)
-        if (isPlaying && config.jitterAmount > 0) {
-          const jitterNoise = Math.sin(currentTime * 0.02 + r * 1.5) * Math.cos(r * 0.8);
-          radius += jitterNoise * config.jitterAmount;
-        }
+        const radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset;
 
         const progressFromSource = Math.max(0.0, 1.0 - (radius / maxSourceReach));
         const densityFactor = Math.max(0.4, 1.2 - (config.sourceCount * 0.08));
         
         let alpha = Math.min(1.0, Math.max(0.02, Math.pow(progressFromSource, config.exponent) * densityFactor)); 
-        alpha *= sourceData.fadeOpacity * pulseOpacityMod;
+        alpha *= sourceData.fadeOpacity * randomFlickerMod;
 
         ctx.lineWidth = sourceData.isTriggered ? config.strokeWidth + 0.8 : config.strokeWidth;
         ctx.strokeStyle = `rgba(${currentColor.r}, ${currentColor.g}, ${currentColor.b}, ${alpha})`;
