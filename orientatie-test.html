@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas - Organische Pulsatie</title>
+  <title>Golffront Kompas - Sterke Kromming op 5m</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -74,7 +74,7 @@
 
   <div id="status">Druk op start om te beginnen.</div>
   <button class="action-btn" id="startBtn">Start Ervaring</button>
-  <button class="action-btn" id="triggerBtn">Simuleer 5m Bereik (Bron 1)</button>
+  <button class="action-btn" id="triggerBtn">Verplaats B1 naar 5m & Speel Af</button>
 
   <div id="controls">
     <h3 id="toggleControls"><span>Parameters</span> <span id="toggleIcon">−</span></h3>
@@ -92,11 +92,6 @@
       <div class="control-group">
         <label for="fadeTimeInput"><span>Fade Out Tijd</span> <strong id="fadeTimeVal">2.0s</strong></label>
         <input type="range" id="fadeTimeInput" min="0.1" max="10.0" value="2.0" step="0.5">
-      </div>
-
-      <div class="control-group">
-        <label for="pulseSpeedInput"><span>Adem Snelheid</span> <strong id="pulseSpeedVal">2.5</strong></label>
-        <input type="range" id="pulseSpeedInput" min="0.5" max="8.0" value="2.5" step="0.5">
       </div>
 
       <div class="control-group">
@@ -130,7 +125,6 @@
       sourceCount: 3,
       sampleLengthSec: 4.0,
       fadeOutDurationSec: 2.0,
-      pulseSpeed: 2.5,
       waveSpacing: 45,
       strokeWidth: 1.0,
       exponent: 4.0,
@@ -157,7 +151,6 @@
     const countInput = document.getElementById('countInput');
     const sampleLengthInput = document.getElementById('sampleLengthInput');
     const fadeTimeInput = document.getElementById('fadeTimeInput');
-    const pulseSpeedInput = document.getElementById('pulseSpeedInput');
     const spacingInput = document.getElementById('spacingInput');
     const thicknessInput = document.getElementById('thicknessInput');
     const exponentInput = document.getElementById('exponentInput');
@@ -166,7 +159,6 @@
     const countVal = document.getElementById('countVal');
     const sampleLengthVal = document.getElementById('sampleLengthVal');
     const fadeTimeVal = document.getElementById('fadeTimeVal');
-    const pulseSpeedVal = document.getElementById('pulseSpeedVal');
     const spacingVal = document.getElementById('spacingVal');
     const thicknessVal = document.getElementById('thicknessVal');
     const exponentVal = document.getElementById('exponentVal');
@@ -186,11 +178,6 @@
     fadeTimeInput.addEventListener('input', (e) => {
       config.fadeOutDurationSec = parseFloat(e.target.value);
       fadeTimeVal.innerText = config.fadeOutDurationSec.toFixed(1) + 's';
-    });
-
-    pulseSpeedInput.addEventListener('input', (e) => {
-      config.pulseSpeed = parseFloat(e.target.value);
-      pulseSpeedVal.innerText = config.pulseSpeed.toFixed(1);
     });
 
     spacingInput.addEventListener('input', (e) => {
@@ -249,8 +236,15 @@
       requestAnimationFrame(renderLoop);
     });
 
+    // Simulatieknop: Verplaatst Bron 1 geforceerd naar 5 meter en start afspelen
     triggerBtn.addEventListener('click', () => {
       if (sources[0] && !sources[0].isRespawning) {
+        if (userLat !== null && userLon !== null) {
+          const targetCoords = calculateTargetCoords(userLat, userLon, 5.0, sources[0].bearing);
+          sources[0].lat = targetCoords.lat;
+          sources[0].lon = targetCoords.lon;
+          sources[0].dist = 5.0;
+        }
         triggerSource(sources[0]);
       }
     });
@@ -279,7 +273,8 @@
       const step = 360 / count;
 
       for (let i = 0; i < count; i++) {
-        const initialDistMeters = 25 + (i * 10);
+        // Willekeurige startafstanden tussen 15m en 50m
+        const initialDistMeters = 15 + Math.floor(Math.random() * 35);
         const bearingDeg = (i * step) % 360;
 
         const targetCoords = calculateTargetCoords(userLat, userLon, initialDistMeters, bearingDeg);
@@ -304,6 +299,7 @@
         source.dist = getHaversineDistance(userLat, userLon, source.lat, source.lon);
         source.bearing = getBearing(userLat, userLon, source.lat, source.lon);
 
+        // Automatische trigger bij het wandelen onder 5 meter
         if (source.dist <= 5 && !source.isTriggered && !source.isRespawning) {
           triggerSource(source);
         }
@@ -317,7 +313,7 @@
 
       setTimeout(() => {
         if (userLat !== null && userLon !== null) {
-          const newDist = 25 + Math.floor(Math.random() * 30);
+          const newDist = 20 + Math.floor(Math.random() * 30);
           const newBearing = Math.floor(Math.random() * 360);
           const newCoords = calculateTargetCoords(userLat, userLon, newDist, newBearing);
 
@@ -386,7 +382,7 @@
         bearingDiff = Math.atan2(Math.sin(bearingDiff * Math.PI / 180), Math.cos(bearingDiff * Math.PI / 180)) * 180 / Math.PI;
 
         if (source.fadeOpacity > 0 && !source.isRespawning) {
-          drawBoundaryWaveCircles(ctx, bearingDiff, source.dist, center, compassRadius, source, currentTime);
+          drawBoundaryWaveCircles(ctx, bearingDiff, source.dist, center, compassRadius, source);
         }
 
         if (i < 4) {
@@ -421,7 +417,7 @@
       requestAnimationFrame(renderLoop);
     }
 
-    function drawBoundaryWaveCircles(ctx, angleDeg, distanceMeters, center, compassRadius, sourceData, currentTime) {
+    function drawBoundaryWaveCircles(ctx, angleDeg, distanceMeters, center, compassRadius, sourceData) {
       ctx.save();
       ctx.translate(center, center);
       ctx.rotate(angleDeg * Math.PI / 180);
@@ -433,7 +429,6 @@
       const maxSourceReach = 1000; 
 
       const currentColor = sourceData.isTriggered ? RED_COLOR : UNIFORM_COLOR;
-      const t = currentTime * 0.001 * config.pulseSpeed;
 
       for (let r = 0; r < numWaves; r++) {
         const radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset;
@@ -442,16 +437,6 @@
         const densityFactor = Math.max(0.4, 1.2 - (config.sourceCount * 0.08));
         
         let alpha = Math.min(1.0, Math.max(0.02, Math.pow(progressFromSource, config.exponent) * densityFactor)); 
-
-        // Vloeiende organische rimpeling in helderheid tijdens afspelen én fade out
-        if (sourceData.isTriggered) {
-          const wavePulse = 0.65 + 0.35 * (
-            Math.sin(t - r * 0.3) * 0.6 + 
-            Math.sin(t * 1.7 + r * 0.1) * 0.4
-          );
-          alpha *= wavePulse;
-        }
-
         alpha *= sourceData.fadeOpacity;
 
         ctx.lineWidth = sourceData.isTriggered ? config.strokeWidth + 0.8 : config.strokeWidth;
