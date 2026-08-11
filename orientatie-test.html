@@ -46,7 +46,7 @@
       position: absolute; top: 15px; right: 15px;
       background: rgba(20, 20, 20, 0.85); border: 1px solid #333;
       backdrop-filter: blur(8px); padding: 12px 16px;
-      border-radius: 12px; z-index: 20; width: 210px;
+      border-radius: 12px; z-index: 20; width: 220px;
       font-size: 11px; color: #ddd; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
     }
 
@@ -85,6 +85,16 @@
       </div>
 
       <div class="control-group">
+        <label for="fadeTimeInput"><span>Fade Out Tijd</span> <strong id="fadeTimeVal">3.0s</strong></label>
+        <input type="range" id="fadeTimeInput" min="0.5" max="10.0" value="3.0" step="0.5">
+      </div>
+
+      <div class="control-group">
+        <label for="respawnDelayInput"><span>Respawn Vertraging</span> <strong id="respawnDelayVal">2.0s</strong></label>
+        <input type="range" id="respawnDelayInput" min="0.0" max="5.0" value="2.0" step="0.5">
+      </div>
+
+      <div class="control-group">
         <label for="spacingInput"><span>Lijnafstand</span> <strong id="spacingVal">45px</strong></label>
         <input type="range" id="spacingInput" min="10" max="60" value="45" step="1">
       </div>
@@ -113,6 +123,8 @@
   <script>
     let config = {
       sourceCount: 3,
+      fadeOutDurationSec: 3.0,
+      respawnDelaySec: 2.0,
       waveSpacing: 45,
       strokeWidth: 1.0,
       exponent: 4.0,
@@ -121,6 +133,7 @@
 
     let rawHeading = 0;
     let smoothedHeading = 0;
+    let lastTime = performance.now();
     
     const UNIFORM_COLOR = { r: 0, g: 255, b: 204 };
     const RED_COLOR = { r: 255, g: 40, b: 40 };
@@ -133,12 +146,16 @@
     const ctx = canvas.getContext('2d');
 
     const countInput = document.getElementById('countInput');
+    const fadeTimeInput = document.getElementById('fadeTimeInput');
+    const respawnDelayInput = document.getElementById('respawnDelayInput');
     const spacingInput = document.getElementById('spacingInput');
     const thicknessInput = document.getElementById('thicknessInput');
     const exponentInput = document.getElementById('exponentInput');
     const speedInput = document.getElementById('speedInput');
 
     const countVal = document.getElementById('countVal');
+    const fadeTimeVal = document.getElementById('fadeTimeVal');
+    const respawnDelayVal = document.getElementById('respawnDelayVal');
     const spacingVal = document.getElementById('spacingVal');
     const thicknessVal = document.getElementById('thicknessVal');
     const exponentVal = document.getElementById('exponentVal');
@@ -148,6 +165,16 @@
       config.sourceCount = parseInt(e.target.value);
       countVal.innerText = config.sourceCount;
       initSources();
+    });
+
+    fadeTimeInput.addEventListener('input', (e) => {
+      config.fadeOutDurationSec = parseFloat(e.target.value);
+      fadeTimeVal.innerText = config.fadeOutDurationSec.toFixed(1) + 's';
+    });
+
+    respawnDelayInput.addEventListener('input', (e) => {
+      config.respawnDelaySec = parseFloat(e.target.value);
+      respawnDelayVal.innerText = config.respawnDelaySec.toFixed(1) + 's';
     });
 
     spacingInput.addEventListener('input', (e) => {
@@ -167,7 +194,7 @@
 
     speedInput.addEventListener('input', (e) => {
       config.animSpeed = parseFloat(e.target.value);
-      speedVal.innerText = config.speedVal;
+      speedVal.innerText = config.animSpeed.toFixed(3);
     });
 
     const toggleControls = document.getElementById('toggleControls');
@@ -194,10 +221,10 @@
 
       startBtn.style.display = 'none';
       triggerBtn.style.display = 'block';
+      lastTime = performance.now();
       requestAnimationFrame(renderLoop);
     });
 
-    // Vaste trigger functie voor simulatie
     triggerBtn.addEventListener('click', () => {
       if (sources[0] && !sources[0].isRespawning) {
         sources[0].dist = 5;
@@ -212,7 +239,6 @@
       const step = 360 / count;
 
       for (let i = 0; i < count; i++) {
-        // Enkel een vaste hardcoded afstand tussen 20m en 50m
         const fixedDistance = 20 + (i * 15);
         const fixedAngle = (i * step) % 360;
 
@@ -238,7 +264,7 @@
         sources[index].isTriggered = false;
         sources[index].fadeOpacity = 1.0;
         sources[index].isRespawning = false;
-      }, 2000);
+      }, config.respawnDelaySec * 1000);
     }
 
     function handleOrientation(event) {
@@ -251,7 +277,10 @@
 
     let animStep = 0;
 
-    function renderLoop() {
+    function renderLoop(currentTime) {
+      const deltaTime = (currentTime - lastTime) / 1000; // Tijdsverschil in seconden
+      lastTime = currentTime;
+
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       const center = 200;
@@ -273,7 +302,8 @@
 
       sources.forEach((source, i) => {
         if (source.isTriggered && source.fadeOpacity > 0) {
-          source.fadeOpacity -= 0.006; 
+          // Berekent de exacte afname van opacity per seconde op basis van de ingestelde duur
+          source.fadeOpacity -= deltaTime / config.fadeOutDurationSec; 
           if (source.fadeOpacity <= 0) {
             source.fadeOpacity = 0;
             if (!source.isRespawning) {
@@ -292,7 +322,7 @@
         if (i < 4) {
           let state = "";
           if (source.isRespawning) {
-            state = " [HERLADEN...]";
+            state = ` [HERLADEN (${config.respawnDelaySec}s)...]`;
           } else if (source.isTriggered) {
             const pct = Math.round(source.fadeOpacity * 100);
             state = ` [FADE: ${pct}%]`;
