@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas - Visual Fade Test</title>
+  <title>Golffront Kompas - Respawn Simulation</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -217,9 +217,8 @@
       requestAnimationFrame(renderLoop);
     });
 
-    // Testknop om handmatig het 5-meter rood/fade-effect af te vuren op Bron 1
     triggerBtn.addEventListener('click', () => {
-      if (arrowData[0]) {
+      if (arrowData[0] && !arrowData[0].isRespawning) {
         arrowData[0].isTriggered = true;
         arrowData[0].fadeOpacity = 1.0;
       }
@@ -253,11 +252,9 @@
       const step = 360 / count;
 
       for (let i = 0; i < count; i++) {
-        // Altijd bronnen binnen 15 tot 85 meter genereren
         const distanceInMeters = Math.floor(15 + Math.random() * 70);
         const angle = (baseAngle + (i * step)) * (Math.PI / 180);
         
-        // Correcte GPS offset berekening in meters
         const deltaLat = (distanceInMeters * Math.cos(angle)) / 111111;
         const deltaLng = (distanceInMeters * Math.sin(angle)) / (111111 * Math.cos(lat * Math.PI / 180));
 
@@ -269,16 +266,50 @@
           targetDist: distanceInMeters, 
           bearing: (angle * 180 / Math.PI + 360) % 360,
           isTriggered: false,
-          fadeOpacity: 1.0
+          fadeOpacity: 1.0,
+          isRespawning: false
         });
       }
+    }
+
+    function respawnSource(index) {
+      if (!userCoords || !arrowData[index]) return;
+
+      arrowData[index].isRespawning = true;
+
+      // 2 seconden wachten voor hergeboorte op een nieuwe plek
+      setTimeout(() => {
+        const distanceInMeters = Math.floor(18 + Math.random() * 65);
+        const randomAngleRad = Math.random() * Math.PI * 2;
+
+        const deltaLat = (distanceInMeters * Math.cos(randomAngleRad)) / 111111;
+        const deltaLng = (distanceInMeters * Math.sin(randomAngleRad)) / (111111 * Math.cos(userCoords.lat * Math.PI / 180));
+
+        targetLocations[index] = { 
+          lat: userCoords.lat + deltaLat, 
+          lng: userCoords.lng + deltaLng 
+        };
+
+        const newBearing = (randomAngleRad * 180 / Math.PI + 360) % 360;
+
+        arrowData[index].targetDist = distanceInMeters;
+        arrowData[index].currentDist = distanceInMeters;
+        arrowData[index].bearing = newBearing;
+        arrowData[index].smoothedBearing = newBearing;
+        arrowData[index].fixedBearing = null;
+
+        // Reset toestand naar een verse bron
+        arrowData[index].isTriggered = false;
+        arrowData[index].fadeOpacity = 1.0;
+        arrowData[index].isRespawning = false;
+      }, 2000);
     }
 
     function calculateTargets() {
       if (!userCoords || targetLocations.length === 0) return;
 
       targetLocations.forEach((target, i) => {
-        if (arrowData[i]) {
+        if (arrowData[i] && !arrowData[i].isRespawning) {
           const dist = getDistance(userCoords.lat, userCoords.lng, target.lat, target.lng);
           arrowData[i].targetDist = dist;
 
@@ -339,9 +370,15 @@
           arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
           const dist = arrowData[i].currentDist;
 
+          // Uitfaden & Respawn triggeren
           if (arrowData[i].isTriggered && arrowData[i].fadeOpacity > 0) {
             arrowData[i].fadeOpacity -= 0.006; 
-            if (arrowData[i].fadeOpacity < 0) arrowData[i].fadeOpacity = 0;
+            if (arrowData[i].fadeOpacity <= 0) {
+              arrowData[i].fadeOpacity = 0;
+              if (!arrowData[i].isRespawning) {
+                respawnSource(i);
+              }
+            }
           }
 
           let activeBearing = 0;
@@ -356,13 +393,18 @@
 
           const relativeAngle = activeBearing - smoothedHeading;
 
-          if (arrowData[i].fadeOpacity > 0) {
+          if (arrowData[i].fadeOpacity > 0 && !arrowData[i].isRespawning) {
             drawBoundaryWaveCircles(ctx, relativeAngle, dist, center, compassRadius, arrowData[i]);
           }
 
           if (i < 4) {
-            const pct = Math.round(arrowData[i].fadeOpacity * 100);
-            const state = arrowData[i].isTriggered ? ` [ROOD/FADE: ${pct}%]` : "";
+            let state = "";
+            if (arrowData[i].isRespawning) {
+              state = " [VERPLAATST...]";
+            } else if (arrowData[i].isTriggered) {
+              const pct = Math.round(arrowData[i].fadeOpacity * 100);
+              state = ` [FADE: ${pct}%]`;
+            }
             statusText += `B${i+1}: ${Math.round(dist)}m${state} | `;
           }
         });
