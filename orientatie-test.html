@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas - Sample Lengte & Fade</title>
+  <title>Golffront Kompas - Live GPS</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -131,9 +131,12 @@
       animSpeed: 0.02
     };
 
+    let userLat = null;
+    let userLon = null;
     let rawHeading = 0;
     let smoothedHeading = 0;
     let lastTime = performance.now();
+    let isGpsInitialized = false;
     
     const UNIFORM_COLOR = { r: 0, g: 255, b: 204 };
     const RED_COLOR = { r: 255, g: 40, b: 40 };
@@ -164,7 +167,7 @@
     countInput.addEventListener('input', (e) => {
       config.sourceCount = parseInt(e.target.value);
       countVal.innerText = config.sourceCount;
-      initSources();
+      if (userLat !== null) generateSourcesFromCurrentLocation();
     });
 
     sampleLengthInput.addEventListener('input', (e) => {
@@ -217,7 +220,15 @@
 
       window.addEventListener('deviceorientation', handleOrientation);
 
-      initSources();
+      if ("geolocation" in navigator) {
+        navigator.geolocation.watchPosition(
+          handleGpsUpdate, 
+          (err) => { status.innerHTML = "GPS Fout: " + err.message; }, 
+          { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+        );
+      } else {
+        status.innerHTML = "GPS niet ondersteund op dit apparaat.";
+      }
 
       startBtn.style.display = 'none';
       triggerBtn.style.display = 'block';
@@ -227,25 +238,47 @@
 
     triggerBtn.addEventListener('click', () => {
       if (sources[0] && !sources[0].isRespawning) {
-        sources[0].dist = 5;
-        sources[0].isTriggered = true;
-        sources[0].fadeOpacity = 1.0;
-        sources[0].playTimer = config.sampleLengthSec; // Start de afspeeltimer
+        triggerSource(sources[0]);
       }
     });
 
-    function initSources() {
+    function triggerSource(source) {
+      source.isTriggered = true;
+      source.fadeOpacity = 1.0;
+      source.playTimer = config.sampleLengthSec;
+    }
+
+    function handleGpsUpdate(position) {
+      userLat = position.coords.latitude;
+      userLon = position.coords.longitude;
+
+      // Eerste keer dat GPS binnenkomt: maak vaste bronpunten om de gebruiker heen aan
+      if (!isGpsInitialized) {
+        generateSourcesFromCurrentLocation();
+        isGpsInitialized = true;
+      }
+
+      // Update afstanden en hoeken ten opzichte van de actuele GPS-positie van de gebruiker
+      updateSourcesPositions();
+    }
+
+    function generateSourcesFromCurrentLocation() {
       sources = [];
       const count = config.sourceCount;
       const step = 360 / count;
 
       for (let i = 0; i < count; i++) {
-        const fixedDistance = 20 + (i * 15);
-        const fixedAngle = (i * step) % 360;
+        const initialDistMeters = 25 + (i * 10);
+        const bearingDeg = (i * step) % 360;
 
-        sources.push({ 
-          dist: fixedDistance,
-          bearing: fixedAngle,
+        // Bepaal vaste GPS-coördinaten van de bron op basis van de huidige positie
+        const targetCoords = calculateTargetCoords(userLat, userLon, initialDistMeters, bearingDeg);
+
+        sources.push({
+          lat: targetCoords.lat,
+          lon: targetCoords.lon,
+          dist: initialDistMeters,
+          bearing: bearingDeg,
           isTriggered: false,
           fadeOpacity: 1.0,
           playTimer: 0,
@@ -254,14 +287,38 @@
       }
     }
 
+    function updateSourcesPositions() {
+      if (userLat === null || userLon === null) return;
+
+      sources.forEach((source) => {
+        // Bereken actuele afstand en richting van gebruiker naar de vaste bron
+        source.dist = getHaversineDistance(userLat, userLon, source.lat, source.lon);
+        source.bearing = getBearing(userLat, userLon, source.lat, source.lon);
+
+        // Automatisch triggeren als de gebruiker binnen 5 meter van een bron komt
+        if (source.dist <= 5 && !source.isTriggered && !source.isRespawning) {
+          triggerSource(source);
+        }
+      });
+    }
+
     function respawnSource(index) {
       if (!sources[index]) return;
 
       sources[index].isRespawning = true;
 
       setTimeout(() => {
-        sources[index].dist = 25 + Math.floor(Math.random() * 30);
-        sources[index].bearing = Math.floor(Math.random() * 360);
+        if (userLat !== null && userLon !== null) {
+          // Plaats bron op een nieuwe vaste GPS-locatie op ~25 tot 55 meter afstand
+          const newDist = 25 + Math.floor(Math.random() * 30);
+          const newBearing = Math.floor(Math.random() * 360);
+          const newCoords = calculateTargetCoords(userLat, userLon, newDist, newBearing);
+
+          sources[index].lat = newCoords.lat;
+          sources[index].lon = newCoords.lon;
+          sources[index].dist = newDist;
+          sources[index].bearing = newBearing;
+        }
 
         sources[index].isTriggered = false;
         sources[index].fadeOpacity = 1.0;
@@ -301,16 +358,13 @@
 
       animStep += config.animSpeed;
 
-      let statusText = "";
+      let statusText = userLat === null ? "GPS zoeken... | " : "";
 
       sources.forEach((source, i) => {
         if (source.isTriggered) {
-          // Fase 1: Sample speelt af (volledige sterkte)
           if (source.playTimer > 0) {
             source.playTimer -= deltaTime;
-          } 
-          // Fase 2: Sample is afgelopen, start de fade out
-          else if (source.fadeOpacity > 0) {
+          } else if (source.fadeOpacity > 0) {
             source.fadeOpacity -= deltaTime / config.fadeOutDurationSec;
             if (source.fadeOpacity <= 0) {
               source.fadeOpacity = 0;
@@ -340,7 +394,7 @@
               state = ` [FADE: ${pct}%]`;
             }
           }
-          statusText += `B${i+1}: ${source.dist}m${state} | `;
+          statusText += `B${i+1}: ${Math.round(source.dist)}m${state} | `;
         }
       });
 
@@ -391,6 +445,44 @@
       }
 
       ctx.restore();
+    }
+
+    // --- WISKUNDIGE GPS FUNCTIES ---
+
+    function getHaversineDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371000; // Aardstraal in meters
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    function getBearing(lat1, lon1, lat2, lon2) {
+      const φ1 = lat1 * Math.PI / 180;
+      const φ2 = lat2 * Math.PI / 180;
+      const Δλ = (lon2 - lon1) * Math.PI / 180;
+      const y = Math.sin(Δλ) * Math.cos(φ2);
+      const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    }
+
+    function calculateTargetCoords(lat, lon, distanceMeters, bearingDeg) {
+      const R = 6371000;
+      const δ = distanceMeters / R;
+      const θ = bearingDeg * Math.PI / 180;
+      const φ1 = lat * Math.PI / 180;
+      const λ1 = lon * Math.PI / 180;
+
+      const φ2 = Math.asin(Math.sin(φ1) * Math.cos(δ) + Math.cos(φ1) * Math.sin(δ) * Math.cos(θ));
+      const λ2 = λ1 + Math.atan2(Math.sin(θ) * Math.sin(δ) * Math.cos(φ1), Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2));
+
+      return {
+        lat: φ2 * 180 / Math.PI,
+        lon: λ2 * 180 / Math.PI
+      };
     }
   </script>
 </body>
