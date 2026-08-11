@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas - Respawn Simulation</title>
+  <title>Golffront Kompas - Fixed Distance</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -255,6 +255,7 @@
         const distanceInMeters = Math.floor(15 + Math.random() * 70);
         const angle = (baseAngle + (i * step)) * (Math.PI / 180);
         
+        // Exacte metrische omrekening
         const deltaLat = (distanceInMeters * Math.cos(angle)) / 111111;
         const deltaLng = (distanceInMeters * Math.sin(angle)) / (111111 * Math.cos(lat * Math.PI / 180));
 
@@ -277,7 +278,6 @@
 
       arrowData[index].isRespawning = true;
 
-      // 2 seconden wachten voor hergeboorte op een nieuwe plek
       setTimeout(() => {
         const distanceInMeters = Math.floor(18 + Math.random() * 65);
         const randomAngleRad = Math.random() * Math.PI * 2;
@@ -298,7 +298,6 @@
         arrowData[index].smoothedBearing = newBearing;
         arrowData[index].fixedBearing = null;
 
-        // Reset toestand naar een verse bron
         arrowData[index].isTriggered = false;
         arrowData[index].fadeOpacity = 1.0;
         arrowData[index].isRespawning = false;
@@ -370,7 +369,6 @@
           arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
           const dist = arrowData[i].currentDist;
 
-          // Uitfaden & Respawn triggeren
           if (arrowData[i].isTriggered && arrowData[i].fadeOpacity > 0) {
             arrowData[i].fadeOpacity -= 0.006; 
             if (arrowData[i].fadeOpacity <= 0) {
@@ -400,7 +398,7 @@
           if (i < 4) {
             let state = "";
             if (arrowData[i].isRespawning) {
-              state = " [VERPLAATST...]";
+              state = " [RESPAWN...]";
             } else if (arrowData[i].isTriggered) {
               const pct = Math.round(arrowData[i].fadeOpacity * 100);
               state = ` [FADE: ${pct}%]`;
@@ -459,14 +457,11 @@
       ctx.restore();
     }
 
+    // Zeer nauwkeurige afstandsmeting in meters op lokaal niveau
     function getDistance(lat1, lon1, lat2, lon2) {
-      const R = 6371e3; 
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLon = (lon2 - lon1) * Math.PI / 180;
-      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2);
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const dLatMeters = (lat2 - lat1) * 111111;
+      const dLonMeters = (lon2 - lon1) * (111111 * Math.cos(lat1 * Math.PI / 180));
+      return Math.sqrt(dLatMeters * dLatMeters + dLonMeters * dLonMeters);
     }
 
     function getBearing(lat1, lon1, lat2, lon2) {
