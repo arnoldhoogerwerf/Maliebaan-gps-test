@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas (Vloeistofsimulatie)</title>
+  <title>Golffront Kompas</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -107,8 +107,6 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      /* VLOEISTOF-EFFECT VIA CSS BLUR & CONTRAST THRESHOLD */
-      filter: blur(4px) contrast(8);
       background-color: #0d0d0d;
     }
 
@@ -163,13 +161,12 @@
     let userCoords = null;
     let targetLocations = [];
 
-    // JOUW GEWENSTE STANDAARD-PARAMETERS INGESTELD:
     let config = {
       sourceCount: 3,
-      waveSpacing: 45,  // 45px
-      strokeWidth: 1.0, // 1.0px
-      exponent: 4.0,    // Gradiënt 4
-      animSpeed: 0.02,  // 0.02 snelheid
+      waveSpacing: 45,  
+      strokeWidth: 1.0, 
+      exponent: 4.0,    
+      animSpeed: 0.02,  
       geoFixRadius: 12 
     };
 
