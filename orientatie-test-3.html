@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Aldus Spreekt De Maliebaan</title>
+  <title>Golffront Kompas (Vloeistofsimulatie)</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -50,35 +50,6 @@
       cursor: pointer;
     }
 
-    /* SCROLLENDE MÖBIUS TEKSTLOOP IN DE INTERFACE */
-    #text-marquee {
-      position: absolute;
-      bottom: 20px;
-      width: 90%;
-      max-width: 450px;
-      white-space: nowrap;
-      overflow: hidden;
-      font-size: 11px;
-      letter-spacing: 1.5px;
-      color: #00ffcc;
-      z-index: 15;
-      text-transform: uppercase;
-      opacity: 0.8;
-      border-top: 1px solid rgba(0, 255, 204, 0.2);
-      border-bottom: 1px solid rgba(0, 255, 204, 0.2);
-      padding: 8px 0;
-    }
-
-    #text-content {
-      display: inline-block;
-      animation: marquee 25s linear infinite;
-    }
-
-    @keyframes marquee {
-      0% { transform: translateX(0%); }
-      100% { transform: translateX(-50%); }
-    }
-
     #controls {
       position: absolute;
       top: 15px;
@@ -107,10 +78,25 @@
       cursor: pointer;
     }
 
-    .control-group { margin-bottom: 10px; }
-    .control-group:last-child { margin-bottom: 0; }
-    .control-group label { display: flex; justify-content: space-between; margin-bottom: 3px; }
-    .control-group input[type="range"] { width: 100%; accent-color: #00ffcc; cursor: pointer; }
+    .control-group {
+      margin-bottom: 10px;
+    }
+
+    .control-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .control-group label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 3px;
+    }
+
+    .control-group input[type="range"] {
+      width: 100%;
+      accent-color: #00ffcc;
+      cursor: pointer;
+    }
 
     #canvas-container {
       position: relative;
@@ -121,7 +107,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      /* VLOEISTOF-EFFECT (BLUR & CONTRAST THRESHOLD) */
+      /* VLOEISTOF-EFFECT VIA CSS BLUR & CONTRAST THRESHOLD */
       filter: blur(4px) contrast(8);
       background-color: #0d0d0d;
     }
@@ -136,7 +122,7 @@
 </head>
 <body>
 
-  <div id="status">Druk op start om de ervaring te beginnen.</div>
+  <div id="status">Druk op start om te beginnen.</div>
   <button class="start-btn" id="startBtn">Start Ervaring</button>
 
   <div id="controls">
@@ -173,37 +159,26 @@
     <canvas id="compassCanvas" width="400" height="400"></canvas>
   </div>
 
-  <!-- DE MOEBIUS TEKSTLOOP INTERFACE -->
-  <div id="text-marquee">
-    <div id="text-content">
-      ...EN KIJKEN IS EEN COMFORTABELE LEUGEN. DUS SLUIT JE OGEN. HOOR JE DE RUIS? EEN STROPERIGE, DWARSE REBELLIE. GELUID HEEFT GEEN MUREN. DE WIND DIE SCHUURT DRINGT JE LICHAAM BINNEN. JE REDT DE WERELD NIET VANAF EEN AFSTAND, JE HEBT ER NOOIT BUITEN GESTAAN. BIJ NADER INZIEN BEN JIJ DE KLANKKAST. JIJ BENT DE DRAAD DIE HOPELOOS VERSTRIKT ZIT IN DE WORTELS VAN DIT BEGIN, WAARIN JE MEET. JE TELT. JE ARCHIVEERT DE WERELD OP EEN SCHERM. MEER DATA, DENK JE. MEER CONTROLE. MAAR DE WERKELIJKHEID IS TE GROOT; ZE GLIPT DOOR DE MAZEN VAN JE NETTEN. HET OOG ZOEKT AFSTAND... 
-      ...EN KIJKEN IS EEN COMFORTABELE LEUGEN. DUS SLUIT JE OGEN. HOOR JE DE RUIS? EEN STROPERIGE, DWARSE REBELLIE. GELUID HEEFT GEEN MUREN. DE WIND DIE SCHUURT DRINGT JE LICHAAM BINNEN. JE REDT DE WERELD NIET VANAF EEN AFSTAND, JE HEBT ER NOOIT BUITEN GESTAAN. BIJ NADER INZIEN BEN JIJ DE KLANKKAST. JIJ BENT DE DRAAD DIE HOPELOOS VERSTRIKT ZIT IN DE WORTELS VAN DIT BEGIN, WAARIN JE MEET. JE TELT. JE ARCHIVEERT DE WERELD OP EEN SCHERM. MEER DATA, DENK JE. MEER CONTROLE. MAAR DE WERKELIJKHEID IS TE GROOT; ZE GLIPT DOOR DE MAZEN VAN JE NETTEN. HET OOG ZOEKT AFSTAND...
-    </div>
-  </div>
-
   <script>
     let userCoords = null;
     let targetLocations = [];
 
-    // PARAMETERS (STANDAARD):
+    // JOUW GEWENSTE STANDAARD-PARAMETERS INGESTELD:
     let config = {
       sourceCount: 3,
-      waveSpacing: 45,
-      strokeWidth: 1.0,
-      exponent: 4.0,
-      animSpeed: 0.02,
-      geoFixRadius: 12
+      waveSpacing: 45,  // 45px
+      strokeWidth: 1.0, // 1.0px
+      exponent: 4.0,    // Gradiënt 4
+      animSpeed: 0.02,  // 0.02 snelheid
+      geoFixRadius: 12 
     };
 
     let rawHeading = 0;
     let smoothedHeading = 0;
+    
     const UNIFORM_COLOR = { r: 0, g: 255, b: 204 };
-    let arrowData = [];
 
-    // WEB AUDIO API SYSTEM
-    let audioCtx = null;
-    let osc = null;
-    let gainNode = null;
+    let arrowData = [];
 
     const startBtn = document.getElementById('startBtn');
     const status = document.getElementById('status');
@@ -262,23 +237,7 @@
       toggleIcon.innerText = isOpen ? '−' : '+';
     });
 
-    // START ERVARING + AUDIO INITIALISATIE
     startBtn.addEventListener('click', async () => {
-      // Init Web Audio API
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new AudioContext();
-      
-      osc = audioCtx.createOscillator();
-      gainNode = audioCtx.createGain();
-      
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(60, audioCtx.currentTime); // Lage grondtoon (60Hz)
-      gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
-
-      osc.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
-      osc.start();
-
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         try {
           const permission = await DeviceOrientationEvent.requestPermission();
@@ -354,16 +313,11 @@
     function calculateTargets() {
       if (!userCoords || targetLocations.length === 0) return;
 
-      let nearestDist = Infinity;
-
       targetLocations.forEach((target, i) => {
         if (arrowData[i]) {
           const dist = getDistance(userCoords.lat, userCoords.lng, target.lat, target.lng);
           arrowData[i].targetDist = dist;
 
-          if (dist < nearestDist) nearestDist = dist;
-
-          // GEOFIXED LOGICA
           if (dist <= config.geoFixRadius) {
             if (arrowData[i].fixedBearing === null) {
               arrowData[i].fixedBearing = arrowData[i].smoothedBearing || arrowData[i].bearing;
@@ -378,12 +332,6 @@
           }
         }
       });
-
-      // MODULEER DE WEBAUDIO FREQUENTIE OP BASIS VAN DE DICHTSTBIJZIJNDE BRON
-      if (audioCtx && osc) {
-        const targetFreq = Math.max(50, 220 - (nearestDist * 0.8));
-        osc.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.5);
-      }
     }
 
     function handleOrientation(event) {
