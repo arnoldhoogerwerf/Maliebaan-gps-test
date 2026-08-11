@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas - Vaste Afstand</title>
+  <title>Golffront Kompas - Sample Lengte & Fade</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -85,13 +85,13 @@
       </div>
 
       <div class="control-group">
-        <label for="fadeTimeInput"><span>Fade Out Tijd</span> <strong id="fadeTimeVal">3.0s</strong></label>
-        <input type="range" id="fadeTimeInput" min="0.5" max="10.0" value="3.0" step="0.5">
+        <label for="sampleLengthInput"><span>Sample Lengte</span> <strong id="sampleLengthVal">4.0s</strong></label>
+        <input type="range" id="sampleLengthInput" min="0.5" max="15.0" value="4.0" step="0.5">
       </div>
 
       <div class="control-group">
-        <label for="respawnDelayInput"><span>Respawn Vertraging</span> <strong id="respawnDelayVal">2.0s</strong></label>
-        <input type="range" id="respawnDelayInput" min="0.0" max="5.0" value="2.0" step="0.5">
+        <label for="fadeTimeInput"><span>Fade Out Tijd</span> <strong id="fadeTimeVal">2.0s</strong></label>
+        <input type="range" id="fadeTimeInput" min="0.1" max="10.0" value="2.0" step="0.5">
       </div>
 
       <div class="control-group">
@@ -123,8 +123,8 @@
   <script>
     let config = {
       sourceCount: 3,
-      fadeOutDurationSec: 3.0,
-      respawnDelaySec: 2.0,
+      sampleLengthSec: 4.0,
+      fadeOutDurationSec: 2.0,
       waveSpacing: 45,
       strokeWidth: 1.0,
       exponent: 4.0,
@@ -146,16 +146,16 @@
     const ctx = canvas.getContext('2d');
 
     const countInput = document.getElementById('countInput');
+    const sampleLengthInput = document.getElementById('sampleLengthInput');
     const fadeTimeInput = document.getElementById('fadeTimeInput');
-    const respawnDelayInput = document.getElementById('respawnDelayInput');
     const spacingInput = document.getElementById('spacingInput');
     const thicknessInput = document.getElementById('thicknessInput');
     const exponentInput = document.getElementById('exponentInput');
     const speedInput = document.getElementById('speedInput');
 
     const countVal = document.getElementById('countVal');
+    const sampleLengthVal = document.getElementById('sampleLengthVal');
     const fadeTimeVal = document.getElementById('fadeTimeVal');
-    const respawnDelayVal = document.getElementById('respawnDelayVal');
     const spacingVal = document.getElementById('spacingVal');
     const thicknessVal = document.getElementById('thicknessVal');
     const exponentVal = document.getElementById('exponentVal');
@@ -167,14 +167,14 @@
       initSources();
     });
 
+    sampleLengthInput.addEventListener('input', (e) => {
+      config.sampleLengthSec = parseFloat(e.target.value);
+      sampleLengthVal.innerText = config.sampleLengthSec.toFixed(1) + 's';
+    });
+
     fadeTimeInput.addEventListener('input', (e) => {
       config.fadeOutDurationSec = parseFloat(e.target.value);
       fadeTimeVal.innerText = config.fadeOutDurationSec.toFixed(1) + 's';
-    });
-
-    respawnDelayInput.addEventListener('input', (e) => {
-      config.respawnDelaySec = parseFloat(e.target.value);
-      respawnDelayVal.innerText = config.respawnDelaySec.toFixed(1) + 's';
     });
 
     spacingInput.addEventListener('input', (e) => {
@@ -230,6 +230,7 @@
         sources[0].dist = 5;
         sources[0].isTriggered = true;
         sources[0].fadeOpacity = 1.0;
+        sources[0].playTimer = config.sampleLengthSec; // Start de afspeeltimer
       }
     });
 
@@ -247,6 +248,7 @@
           bearing: fixedAngle,
           isTriggered: false,
           fadeOpacity: 1.0,
+          playTimer: 0,
           isRespawning: false
         });
       }
@@ -263,8 +265,9 @@
 
         sources[index].isTriggered = false;
         sources[index].fadeOpacity = 1.0;
+        sources[index].playTimer = 0;
         sources[index].isRespawning = false;
-      }, config.respawnDelaySec * 1000);
+      }, 1000);
     }
 
     function handleOrientation(event) {
@@ -278,7 +281,7 @@
     let animStep = 0;
 
     function renderLoop(currentTime) {
-      const deltaTime = (currentTime - lastTime) / 1000; // Tijdsverschil in seconden
+      const deltaTime = (currentTime - lastTime) / 1000;
       lastTime = currentTime;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -301,13 +304,19 @@
       let statusText = "";
 
       sources.forEach((source, i) => {
-        if (source.isTriggered && source.fadeOpacity > 0) {
-          // Berekent de exacte afname van opacity per seconde op basis van de ingestelde duur
-          source.fadeOpacity -= deltaTime / config.fadeOutDurationSec; 
-          if (source.fadeOpacity <= 0) {
-            source.fadeOpacity = 0;
-            if (!source.isRespawning) {
-              respawnSource(i);
+        if (source.isTriggered) {
+          // Fase 1: Sample speelt af (volledige sterkte)
+          if (source.playTimer > 0) {
+            source.playTimer -= deltaTime;
+          } 
+          // Fase 2: Sample is afgelopen, start de fade out
+          else if (source.fadeOpacity > 0) {
+            source.fadeOpacity -= deltaTime / config.fadeOutDurationSec;
+            if (source.fadeOpacity <= 0) {
+              source.fadeOpacity = 0;
+              if (!source.isRespawning) {
+                respawnSource(i);
+              }
             }
           }
         }
@@ -322,10 +331,14 @@
         if (i < 4) {
           let state = "";
           if (source.isRespawning) {
-            state = ` [HERLADEN (${config.respawnDelaySec}s)...]`;
+            state = ` [HERLADEN...]`;
           } else if (source.isTriggered) {
-            const pct = Math.round(source.fadeOpacity * 100);
-            state = ` [FADE: ${pct}%]`;
+            if (source.playTimer > 0) {
+              state = ` [PLAY: ${source.playTimer.toFixed(1)}s]`;
+            } else {
+              const pct = Math.round(source.fadeOpacity * 100);
+              state = ` [FADE: ${pct}%]`;
+            }
           }
           statusText += `B${i+1}: ${source.dist}m${state} | `;
         }
