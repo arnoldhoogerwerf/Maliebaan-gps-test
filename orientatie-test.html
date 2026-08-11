@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas - Fixed Distance</title>
+  <title>Golffront Kompas - Vaste Afstand</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -111,17 +111,12 @@
   </div>
 
   <script>
-    let userCoords = null;
-    let targetLocations = [];
-
     let config = {
       sourceCount: 3,
       waveSpacing: 45,
       strokeWidth: 1.0,
       exponent: 4.0,
-      animSpeed: 0.02,
-      geoFixRadius: 12,
-      triggerRadius: 5.0
+      animSpeed: 0.02
     };
 
     let rawHeading = 0;
@@ -129,7 +124,7 @@
     
     const UNIFORM_COLOR = { r: 0, g: 255, b: 204 };
     const RED_COLOR = { r: 255, g: 40, b: 40 };
-    let arrowData = [];
+    let sources = [];
 
     const startBtn = document.getElementById('startBtn');
     const triggerBtn = document.getElementById('triggerBtn');
@@ -152,10 +147,7 @@
     countInput.addEventListener('input', (e) => {
       config.sourceCount = parseInt(e.target.value);
       countVal.innerText = config.sourceCount;
-      if (userCoords) {
-        generateTargetLocations(userCoords.lat, userCoords.lng);
-        calculateTargets();
-      }
+      initSources();
     });
 
     spacingInput.addEventListener('input', (e) => {
@@ -175,7 +167,7 @@
 
     speedInput.addEventListener('input', (e) => {
       config.animSpeed = parseFloat(e.target.value);
-      speedVal.innerText = config.animSpeed.toFixed(3);
+      speedVal.innerText = config.speedVal;
     });
 
     const toggleControls = document.getElementById('toggleControls');
@@ -198,74 +190,35 @@
 
       window.addEventListener('deviceorientation', handleOrientation);
 
-      if ("geolocation" in navigator) {
-        status.innerText = "GPS zoeken...";
-        navigator.geolocation.watchPosition(updatePosition, handleError, {
-          enableHighAccuracy: true,
-          maximumAge: 1000,
-          timeout: 10000
-        });
-      }
-
-      if (!userCoords) {
-        userCoords = { lat: 52.3702, lng: 4.8951 };
-        generateTargetLocations(userCoords.lat, userCoords.lng);
-      }
+      initSources();
 
       startBtn.style.display = 'none';
       triggerBtn.style.display = 'block';
       requestAnimationFrame(renderLoop);
     });
 
+    // Vaste trigger functie voor simulatie
     triggerBtn.addEventListener('click', () => {
-      if (arrowData[0] && !arrowData[0].isRespawning) {
-        arrowData[0].isTriggered = true;
-        arrowData[0].fadeOpacity = 1.0;
+      if (sources[0] && !sources[0].isRespawning) {
+        sources[0].dist = 5;
+        sources[0].isTriggered = true;
+        sources[0].fadeOpacity = 1.0;
       }
     });
 
-    function updatePosition(position) {
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
-
-      if (!userCoords) {
-        userCoords = { lat, lng };
-        generateTargetLocations(lat, lng);
-      } else {
-        userCoords.lat = lat;
-        userCoords.lng = lng;
-      }
-
-      calculateTargets();
-    }
-
-    function handleError(err) {
-      status.innerText = "GPS Fout: " + err.message;
-    }
-
-    function generateTargetLocations(lat, lng) {
-      targetLocations = [];
-      arrowData = [];
-      
+    function initSources() {
+      sources = [];
       const count = config.sourceCount;
-      const baseAngle = Math.random() * 360; 
       const step = 360 / count;
 
       for (let i = 0; i < count; i++) {
-        const distanceInMeters = Math.floor(15 + Math.random() * 70);
-        const angle = (baseAngle + (i * step)) * (Math.PI / 180);
-        
-        // Exacte metrische omrekening
-        const deltaLat = (distanceInMeters * Math.cos(angle)) / 111111;
-        const deltaLng = (distanceInMeters * Math.sin(angle)) / (111111 * Math.cos(lat * Math.PI / 180));
+        // Enkel een vaste hardcoded afstand tussen 20m en 50m
+        const fixedDistance = 20 + (i * 15);
+        const fixedAngle = (i * step) % 360;
 
-        targetLocations.push({ lat: lat + deltaLat, lng: lng + deltaLng });
-        arrowData.push({ 
-          smoothedBearing: 0, 
-          fixedBearing: null,
-          currentDist: distanceInMeters, 
-          targetDist: distanceInMeters, 
-          bearing: (angle * 180 / Math.PI + 360) % 360,
+        sources.push({ 
+          dist: fixedDistance,
+          bearing: fixedAngle,
           isTriggered: false,
           fadeOpacity: 1.0,
           isRespawning: false
@@ -274,62 +227,18 @@
     }
 
     function respawnSource(index) {
-      if (!userCoords || !arrowData[index]) return;
+      if (!sources[index]) return;
 
-      arrowData[index].isRespawning = true;
+      sources[index].isRespawning = true;
 
       setTimeout(() => {
-        const distanceInMeters = Math.floor(18 + Math.random() * 65);
-        const randomAngleRad = Math.random() * Math.PI * 2;
+        sources[index].dist = 25 + Math.floor(Math.random() * 30);
+        sources[index].bearing = Math.floor(Math.random() * 360);
 
-        const deltaLat = (distanceInMeters * Math.cos(randomAngleRad)) / 111111;
-        const deltaLng = (distanceInMeters * Math.sin(randomAngleRad)) / (111111 * Math.cos(userCoords.lat * Math.PI / 180));
-
-        targetLocations[index] = { 
-          lat: userCoords.lat + deltaLat, 
-          lng: userCoords.lng + deltaLng 
-        };
-
-        const newBearing = (randomAngleRad * 180 / Math.PI + 360) % 360;
-
-        arrowData[index].targetDist = distanceInMeters;
-        arrowData[index].currentDist = distanceInMeters;
-        arrowData[index].bearing = newBearing;
-        arrowData[index].smoothedBearing = newBearing;
-        arrowData[index].fixedBearing = null;
-
-        arrowData[index].isTriggered = false;
-        arrowData[index].fadeOpacity = 1.0;
-        arrowData[index].isRespawning = false;
+        sources[index].isTriggered = false;
+        sources[index].fadeOpacity = 1.0;
+        sources[index].isRespawning = false;
       }, 2000);
-    }
-
-    function calculateTargets() {
-      if (!userCoords || targetLocations.length === 0) return;
-
-      targetLocations.forEach((target, i) => {
-        if (arrowData[i] && !arrowData[i].isRespawning) {
-          const dist = getDistance(userCoords.lat, userCoords.lng, target.lat, target.lng);
-          arrowData[i].targetDist = dist;
-
-          if (dist <= config.triggerRadius && !arrowData[i].isTriggered) {
-            arrowData[i].isTriggered = true;
-          }
-
-          if (dist <= config.geoFixRadius) {
-            if (arrowData[i].fixedBearing === null) {
-              arrowData[i].fixedBearing = arrowData[i].smoothedBearing || arrowData[i].bearing;
-            }
-          } else {
-            arrowData[i].fixedBearing = null;
-            arrowData[i].bearing = getBearing(userCoords.lat, userCoords.lng, target.lat, target.lng);
-          }
-          
-          if (arrowData[i].smoothedBearing === 0) {
-            arrowData[i].smoothedBearing = arrowData[i].bearing;
-          }
-        }
-      });
     }
 
     function handleOrientation(event) {
@@ -360,56 +269,40 @@
 
       animStep += config.animSpeed;
 
-      if (userCoords && targetLocations.length > 0) {
-        let statusText = "";
+      let statusText = "";
 
-        targetLocations.forEach((target, i) => {
-          if (!arrowData[i]) return;
-
-          arrowData[i].currentDist += (arrowData[i].targetDist - arrowData[i].currentDist) * 0.05;
-          const dist = arrowData[i].currentDist;
-
-          if (arrowData[i].isTriggered && arrowData[i].fadeOpacity > 0) {
-            arrowData[i].fadeOpacity -= 0.006; 
-            if (arrowData[i].fadeOpacity <= 0) {
-              arrowData[i].fadeOpacity = 0;
-              if (!arrowData[i].isRespawning) {
-                respawnSource(i);
-              }
+      sources.forEach((source, i) => {
+        if (source.isTriggered && source.fadeOpacity > 0) {
+          source.fadeOpacity -= 0.006; 
+          if (source.fadeOpacity <= 0) {
+            source.fadeOpacity = 0;
+            if (!source.isRespawning) {
+              respawnSource(i);
             }
           }
+        }
 
-          let activeBearing = 0;
-          if (arrowData[i].fixedBearing !== null) {
-            activeBearing = arrowData[i].fixedBearing;
-          } else {
-            let bearingDiff = arrowData[i].bearing - arrowData[i].smoothedBearing;
-            bearingDiff = Math.atan2(Math.sin(bearingDiff * Math.PI / 180), Math.cos(bearingDiff * Math.PI / 180)) * 180 / Math.PI;
-            arrowData[i].smoothedBearing += bearingDiff * 0.08;
-            activeBearing = arrowData[i].smoothedBearing;
+        let bearingDiff = source.bearing - smoothedHeading;
+        bearingDiff = Math.atan2(Math.sin(bearingDiff * Math.PI / 180), Math.cos(bearingDiff * Math.PI / 180)) * 180 / Math.PI;
+
+        if (source.fadeOpacity > 0 && !source.isRespawning) {
+          drawBoundaryWaveCircles(ctx, bearingDiff, source.dist, center, compassRadius, source);
+        }
+
+        if (i < 4) {
+          let state = "";
+          if (source.isRespawning) {
+            state = " [HERLADEN...]";
+          } else if (source.isTriggered) {
+            const pct = Math.round(source.fadeOpacity * 100);
+            state = ` [FADE: ${pct}%]`;
           }
+          statusText += `B${i+1}: ${source.dist}m${state} | `;
+        }
+      });
 
-          const relativeAngle = activeBearing - smoothedHeading;
-
-          if (arrowData[i].fadeOpacity > 0 && !arrowData[i].isRespawning) {
-            drawBoundaryWaveCircles(ctx, relativeAngle, dist, center, compassRadius, arrowData[i]);
-          }
-
-          if (i < 4) {
-            let state = "";
-            if (arrowData[i].isRespawning) {
-              state = " [RESPAWN...]";
-            } else if (arrowData[i].isTriggered) {
-              const pct = Math.round(arrowData[i].fadeOpacity * 100);
-              state = ` [FADE: ${pct}%]`;
-            }
-            statusText += `B${i+1}: ${Math.round(dist)}m${state} | `;
-          }
-        });
-
-        if (targetLocations.length > 4) statusText += `+${targetLocations.length - 4} extra`;
-        status.innerHTML = statusText;
-      }
+      if (sources.length > 4) statusText += `+${sources.length - 4} extra`;
+      status.innerHTML = statusText;
 
       ctx.restore();
 
@@ -455,20 +348,6 @@
       }
 
       ctx.restore();
-    }
-
-    // Zeer nauwkeurige afstandsmeting in meters op lokaal niveau
-    function getDistance(lat1, lon1, lat2, lon2) {
-      const dLatMeters = (lat2 - lat1) * 111111;
-      const dLonMeters = (lon2 - lon1) * (111111 * Math.cos(lat1 * Math.PI / 180));
-      return Math.sqrt(dLatMeters * dLatMeters + dLonMeters * dLonMeters);
-    }
-
-    function getBearing(lat1, lon1, lat2, lon2) {
-      const y = Math.sin((lon2 - lon1) * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180);
-      const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
-                Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos((lon2 - lon1) * Math.PI / 180);
-      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
     }
   </script>
 </body>
