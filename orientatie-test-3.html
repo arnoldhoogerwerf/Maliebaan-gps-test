@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas</title>
+  <title>Golffront Kompas (Vloeistofsimulatie)</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -78,25 +78,10 @@
       cursor: pointer;
     }
 
-    .control-group {
-      margin-bottom: 10px;
-    }
-
-    .control-group:last-child {
-      margin-bottom: 0;
-    }
-
-    .control-group label {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 3px;
-    }
-
-    .control-group input[type="range"] {
-      width: 100%;
-      accent-color: #00ffcc;
-      cursor: pointer;
-    }
+    .control-group { margin-bottom: 10px; }
+    .control-group:last-child { margin-bottom: 0; }
+    .control-group label { display: flex; justify-content: space-between; margin-bottom: 3px; }
+    .control-group input[type="range"] { width: 100%; accent-color: #00ffcc; cursor: pointer; }
 
     #canvas-container {
       position: relative;
@@ -114,7 +99,6 @@
       width: 100%;
       height: 100%;
       border-radius: 50%;
-      image-rendering: crisp-edges;
     }
   </style>
 </head>
@@ -163,10 +147,10 @@
 
     let config = {
       sourceCount: 3,
-      waveSpacing: 45,  
-      strokeWidth: 1.0, 
-      exponent: 4.0,    
-      animSpeed: 0.02,  
+      waveSpacing: 45,
+      strokeWidth: 1.0,
+      exponent: 4.0,
+      animSpeed: 0.02,
       geoFixRadius: 12 
     };
 
@@ -174,7 +158,6 @@
     let smoothedHeading = 0;
     
     const UNIFORM_COLOR = { r: 0, g: 255, b: 204 };
-
     let arrowData = [];
 
     const startBtn = document.getElementById('startBtn');
@@ -408,6 +391,10 @@
 
     function drawBoundaryWaveCircles(ctx, angleDeg, distanceMeters, center, compassRadius) {
       ctx.save();
+      
+      // HARDWARE-VRIENDELIJKE CANVAS BLUR (Compatibel met iOS Safari)
+      ctx.filter = 'blur(3px)';
+      
       ctx.translate(center, center);
       ctx.rotate(angleDeg * Math.PI / 180);
 
@@ -426,7 +413,7 @@
         const densityFactor = Math.max(0.4, 1.2 - (config.sourceCount * 0.08));
         const alpha = Math.min(1.0, Math.max(0.02, Math.pow(progressFromSource, config.exponent) * densityFactor)); 
         
-        ctx.lineWidth = config.strokeWidth;
+        ctx.lineWidth = config.strokeWidth + 2; // Iets dikker voor een betere gloei/vloeistof-look
         ctx.strokeStyle = `rgba(${UNIFORM_COLOR.r}, ${UNIFORM_COLOR.g}, ${UNIFORM_COLOR.b}, ${alpha})`;
 
         ctx.beginPath();
