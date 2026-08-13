@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas - Elastische Trigger Bounce</title>
+  <title>Golffront Kompas - Trage Elastische Trigger Bounce</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -95,8 +95,8 @@
       </div>
 
       <div class="control-group">
-        <label for="bounceInput"><span>Elastische Bounce</span> <strong id="bounceVal">18px</strong></label>
-        <input type="range" id="bounceInput" min="0" max="40" value="18" step="1">
+        <label for="bounceInput"><span>Elastische Bounce</span> <strong id="bounceVal">10px</strong></label>
+        <input type="range" id="bounceInput" min="0" max="40" value="10" step="1">
       </div>
 
       <div class="control-group">
@@ -130,7 +130,7 @@
       sourceCount: 3,
       sampleLengthSec: 4.0,
       fadeOutDurationSec: 2.0,
-      bounceForce: 18,
+      bounceForce: 10,
       waveSpacing: 45,
       strokeWidth: 1.0,
       exponent: 4.0,
@@ -265,7 +265,7 @@
       source.isTriggered = true;
       source.fadeOpacity = 1.0;
       source.playTimer = config.sampleLengthSec;
-      source.triggerTime = performance.now(); // Tijdstempel om elastisch effect te berekenen
+      source.triggerTime = performance.now();
     }
 
     function handleGpsUpdate(position) {
@@ -443,16 +443,16 @@
 
       const currentColor = sourceData.isTriggered ? RED_COLOR : UNIFORM_COLOR;
 
-      // --- ELASTISCHE BOUNCE BEREKENING ---
+      // --- TRAGE ELASTISCHE BOUNCE BEREKENING ---
       let elasticOffset = 0;
       if (sourceData.isTriggered && sourceData.triggerTime > 0) {
         const elapsedSec = (currentTime - sourceData.triggerTime) / 1000;
-        const duration = 0.8; // Lengte van de bounce in seconden
+        const duration = 1.4; // Iets langere duur voor een trager effect
 
         if (elapsedSec < duration) {
-          // Gedempte Sinusgolf: Schiet naar voren en veert elastisch uit
-          const decay = Math.exp(-elapsedSec * 6); // Doving
-          const oscillation = Math.sin(elapsedSec * Math.PI * 8); // Resonantie/Trilling
+          // Lagere frequentie (Math.PI * 4) en zachtere doving voor een luie, trage elastische veer
+          const decay = Math.exp(-elapsedSec * 3.0); 
+          const oscillation = Math.sin(elapsedSec * Math.PI * 4); 
           elasticOffset = oscillation * decay * config.bounceForce;
         }
       }
