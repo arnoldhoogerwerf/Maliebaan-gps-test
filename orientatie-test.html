@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas - Sterke Kromming op 5m</title>
+  <title>Golffront Kompas - Elastische Trigger Bounce</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -95,6 +95,11 @@
       </div>
 
       <div class="control-group">
+        <label for="bounceInput"><span>Elastische Bounce</span> <strong id="bounceVal">18px</strong></label>
+        <input type="range" id="bounceInput" min="0" max="40" value="18" step="1">
+      </div>
+
+      <div class="control-group">
         <label for="spacingInput"><span>Lijnafstand</span> <strong id="spacingVal">45px</strong></label>
         <input type="range" id="spacingInput" min="10" max="60" value="45" step="1">
       </div>
@@ -125,6 +130,7 @@
       sourceCount: 3,
       sampleLengthSec: 4.0,
       fadeOutDurationSec: 2.0,
+      bounceForce: 18,
       waveSpacing: 45,
       strokeWidth: 1.0,
       exponent: 4.0,
@@ -151,6 +157,7 @@
     const countInput = document.getElementById('countInput');
     const sampleLengthInput = document.getElementById('sampleLengthInput');
     const fadeTimeInput = document.getElementById('fadeTimeInput');
+    const bounceInput = document.getElementById('bounceInput');
     const spacingInput = document.getElementById('spacingInput');
     const thicknessInput = document.getElementById('thicknessInput');
     const exponentInput = document.getElementById('exponentInput');
@@ -159,6 +166,7 @@
     const countVal = document.getElementById('countVal');
     const sampleLengthVal = document.getElementById('sampleLengthVal');
     const fadeTimeVal = document.getElementById('fadeTimeVal');
+    const bounceVal = document.getElementById('bounceVal');
     const spacingVal = document.getElementById('spacingVal');
     const thicknessVal = document.getElementById('thicknessVal');
     const exponentVal = document.getElementById('exponentVal');
@@ -178,6 +186,11 @@
     fadeTimeInput.addEventListener('input', (e) => {
       config.fadeOutDurationSec = parseFloat(e.target.value);
       fadeTimeVal.innerText = config.fadeOutDurationSec.toFixed(1) + 's';
+    });
+
+    bounceInput.addEventListener('input', (e) => {
+      config.bounceForce = parseFloat(e.target.value);
+      bounceVal.innerText = config.bounceForce + 'px';
     });
 
     spacingInput.addEventListener('input', (e) => {
@@ -236,7 +249,6 @@
       requestAnimationFrame(renderLoop);
     });
 
-    // Simulatieknop: Verplaatst Bron 1 geforceerd naar 5 meter en start afspelen
     triggerBtn.addEventListener('click', () => {
       if (sources[0] && !sources[0].isRespawning) {
         if (userLat !== null && userLon !== null) {
@@ -253,6 +265,7 @@
       source.isTriggered = true;
       source.fadeOpacity = 1.0;
       source.playTimer = config.sampleLengthSec;
+      source.triggerTime = performance.now(); // Tijdstempel om elastisch effect te berekenen
     }
 
     function handleGpsUpdate(position) {
@@ -273,7 +286,6 @@
       const step = 360 / count;
 
       for (let i = 0; i < count; i++) {
-        // Willekeurige startafstanden tussen 15m en 50m
         const initialDistMeters = 15 + Math.floor(Math.random() * 35);
         const bearingDeg = (i * step) % 360;
 
@@ -287,6 +299,7 @@
           isTriggered: false,
           fadeOpacity: 1.0,
           playTimer: 0,
+          triggerTime: 0,
           isRespawning: false
         });
       }
@@ -299,7 +312,6 @@
         source.dist = getHaversineDistance(userLat, userLon, source.lat, source.lon);
         source.bearing = getBearing(userLat, userLon, source.lat, source.lon);
 
-        // Automatische trigger bij het wandelen onder 5 meter
         if (source.dist <= 5 && !source.isTriggered && !source.isRespawning) {
           triggerSource(source);
         }
@@ -326,6 +338,7 @@
         sources[index].isTriggered = false;
         sources[index].fadeOpacity = 1.0;
         sources[index].playTimer = 0;
+        sources[index].triggerTime = 0;
         sources[index].isRespawning = false;
       }, 1000);
     }
@@ -382,7 +395,7 @@
         bearingDiff = Math.atan2(Math.sin(bearingDiff * Math.PI / 180), Math.cos(bearingDiff * Math.PI / 180)) * 180 / Math.PI;
 
         if (source.fadeOpacity > 0 && !source.isRespawning) {
-          drawBoundaryWaveCircles(ctx, bearingDiff, source.dist, center, compassRadius, source);
+          drawBoundaryWaveCircles(ctx, bearingDiff, source.dist, center, compassRadius, source, currentTime);
         }
 
         if (i < 4) {
@@ -417,7 +430,7 @@
       requestAnimationFrame(renderLoop);
     }
 
-    function drawBoundaryWaveCircles(ctx, angleDeg, distanceMeters, center, compassRadius, sourceData) {
+    function drawBoundaryWaveCircles(ctx, angleDeg, distanceMeters, center, compassRadius, sourceData, currentTime) {
       ctx.save();
       ctx.translate(center, center);
       ctx.rotate(angleDeg * Math.PI / 180);
@@ -430,8 +443,22 @@
 
       const currentColor = sourceData.isTriggered ? RED_COLOR : UNIFORM_COLOR;
 
+      // --- ELASTISCHE BOUNCE BEREKENING ---
+      let elasticOffset = 0;
+      if (sourceData.isTriggered && sourceData.triggerTime > 0) {
+        const elapsedSec = (currentTime - sourceData.triggerTime) / 1000;
+        const duration = 0.8; // Lengte van de bounce in seconden
+
+        if (elapsedSec < duration) {
+          // Gedempte Sinusgolf: Schiet naar voren en veert elastisch uit
+          const decay = Math.exp(-elapsedSec * 6); // Doving
+          const oscillation = Math.sin(elapsedSec * Math.PI * 8); // Resonantie/Trilling
+          elasticOffset = oscillation * decay * config.bounceForce;
+        }
+      }
+
       for (let r = 0; r < numWaves; r++) {
-        const radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset;
+        let radius = Math.abs(sourceY) - compassRadius + (r * waveSpacing) + timeOffset + elasticOffset;
 
         const progressFromSource = Math.max(0.0, 1.0 - (radius / maxSourceReach));
         const densityFactor = Math.max(0.4, 1.2 - (config.sourceCount * 0.08));
