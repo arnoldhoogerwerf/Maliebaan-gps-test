@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Golffront Kompas - Trage Elastische Trigger Bounce</title>
+  <title>Golffront Kompas - Random Afstand (5-100m)</title>
   <style>
     * { box-sizing: border-box; }
     body, html {
@@ -286,7 +286,8 @@
       const step = 360 / count;
 
       for (let i = 0; i < count; i++) {
-        const initialDistMeters = 15 + Math.floor(Math.random() * 35);
+        // Willekeurige afstand tussen 5 en 100 meter
+        const initialDistMeters = 5 + Math.floor(Math.random() * 95);
         const bearingDeg = (i * step) % 360;
 
         const targetCoords = calculateTargetCoords(userLat, userLon, initialDistMeters, bearingDeg);
@@ -325,7 +326,8 @@
 
       setTimeout(() => {
         if (userLat !== null && userLon !== null) {
-          const newDist = 20 + Math.floor(Math.random() * 30);
+          // Bij herladen ook weer een willekeurige afstand tussen 5 en 100 meter
+          const newDist = 5 + Math.floor(Math.random() * 95);
           const newBearing = Math.floor(Math.random() * 360);
           const newCoords = calculateTargetCoords(userLat, userLon, newDist, newBearing);
 
@@ -447,10 +449,9 @@
       let elasticOffset = 0;
       if (sourceData.isTriggered && sourceData.triggerTime > 0) {
         const elapsedSec = (currentTime - sourceData.triggerTime) / 1000;
-        const duration = 1.4; // Iets langere duur voor een trager effect
+        const duration = 1.4;
 
         if (elapsedSec < duration) {
-          // Lagere frequentie (Math.PI * 4) en zachtere doving voor een luie, trage elastische veer
           const decay = Math.exp(-elapsedSec * 3.0); 
           const oscillation = Math.sin(elapsedSec * Math.PI * 4); 
           elasticOffset = oscillation * decay * config.bounceForce;
